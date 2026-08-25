@@ -12,10 +12,17 @@
       "bundleIdentifier": "com.yourcompany.docwire"
     },
     "android": {
-      "package": "com.yourcompany.docwire"
+      "package": "com.yourcompany.docwire",
+      "adaptiveIcon": {
+        "backgroundColor": "#F8F8F8"
+      }
     },
     "web": {
       "bundler": "metro"
+    },
+    "splash": {
+      "backgroundColor": "#F8F8F8",
+      "resizeMode": "contain"
     },
     "extra": {
       "eas": {
