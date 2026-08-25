@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "DocWire",
+    "slug": "docwire-app",
+    "scheme": "docwire",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourcompany.docwire"
+    },
+    "android": {
+      "package": "com.yourcompany.docwire"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR-EAS-PROJECT-ID"
+      }
+    }
+  }
+}
