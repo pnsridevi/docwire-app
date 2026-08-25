@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { supabase } from './lib/supabase';
+import { supabase, supabaseConfigError } from './lib/supabase';
 import { colors } from './theme/colors';
 import { OutlineButton } from './components/UI';
 import { Profile } from './lib/types';
@@ -33,6 +33,15 @@ export default function App() {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  if (supabaseConfigError) {
+    return (
+      <SafeAreaView style={styles.center}>
+        <Text style={{ color: colors.danger, fontWeight: '700', marginBottom: 8 }}>Setup issue</Text>
+        <Text style={{ color: colors.textDim, textAlign: 'center' }}>{supabaseConfigError}</Text>
+      </SafeAreaView>
+    );
+  }
 
   if (loading) {
     return (
