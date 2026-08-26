@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { OutlineButton, DangerOutlineButton, CommentBox, Pill, ScreenContainer } from '../components/UI';
+import { OutlineButton, DangerOutlineButton, CommentBox, Pill, ScreenContainer, useGridColumns, padForGrid } from '../components/UI';
 import { Doc } from '../lib/types';
 
 // Manager review screen.
@@ -16,6 +16,7 @@ export default function ManagerHomeScreen() {
   // draft text for it, keyed by document id.
   const [reworkDraftId, setReworkDraftId] = useState<string | null>(null);
   const [reworkComment, setReworkComment] = useState('');
+  const columns = useGridColumns();
 
   const loadDocs = async () => {
     const { data } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
@@ -54,46 +55,50 @@ export default function ManagerHomeScreen() {
       <View style={styles.screen}>
         <Text style={styles.heading}>Assigned clients' documents</Text>
         <FlatList
-          data={docs}
-          keyExtractor={(d) => d.id}
-          renderItem={({ item }) => (
-            <View style={styles.docCard}>
-              <View style={styles.docTopRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.docName}>{item.name}</Text>
-                  <Pill status={item.status} />
-                </View>
+          key={columns} // RN requires a remount when numColumns changes
+          data={padForGrid(docs, columns)}
+          keyExtractor={(d, i) => d?.id ?? `spacer-${i}`}
+          numColumns={columns}
+          columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
+          renderItem={({ item }) =>
+            !item ? (
+              <View style={[styles.docCard, styles.docCardGrid, styles.spacer]} />
+            ) : (
+              <View style={[styles.docCard, columns === 2 && styles.docCardGrid]}>
+                <Text style={styles.docName}>{item.name}</Text>
+                <Pill status={item.status} />
+
+                {item.status === 'rework' && item.comment ? (
+                  <View style={styles.commentBox}>
+                    <Text style={styles.commentLabel}>Your note</Text>
+                    <Text style={styles.commentText}>{item.comment}</Text>
+                    <Text style={styles.commentMeta}>Waiting on the Accountant to re-submit</Text>
+                  </View>
+                ) : null}
+
                 {item.status === 'accounted' && reworkDraftId !== item.id && (
                   <View style={styles.actions}>
                     <OutlineButton title="Mark Reviewed" onPress={() => markReviewed(item.id)} />
                     <DangerOutlineButton title="Send to Rework" onPress={() => openReworkBox(item.id)} />
                   </View>
                 )}
-              </View>
 
-              {item.status === 'rework' && item.comment ? (
-                <View style={styles.commentBox}>
-                  <Text style={styles.commentLabel}>Your note</Text>
-                  <Text style={styles.commentText}>{item.comment}</Text>
-                  <Text style={styles.commentMeta}>Waiting on the Accountant to re-submit</Text>
-                </View>
-              ) : null}
-
-              {reworkDraftId === item.id && (
-                <View>
-                  <CommentBox
-                    value={reworkComment}
-                    onChangeText={setReworkComment}
-                    placeholder="What needs to be fixed?"
-                  />
-                  <View style={styles.actions}>
-                    <OutlineButton title="Cancel" onPress={cancelRework} />
-                    <DangerOutlineButton title="Confirm Rework" onPress={() => confirmRework(item.id)} />
+                {reworkDraftId === item.id && (
+                  <View>
+                    <CommentBox
+                      value={reworkComment}
+                      onChangeText={setReworkComment}
+                      placeholder="What needs to be fixed?"
+                    />
+                    <View style={styles.actions}>
+                      <OutlineButton title="Cancel" onPress={cancelRework} />
+                      <DangerOutlineButton title="Confirm Rework" onPress={() => confirmRework(item.id)} />
+                    </View>
                   </View>
-                </View>
-              )}
-            </View>
-          )}
+                )}
+              </View>
+            )
+          }
           ListEmptyComponent={<Text style={styles.empty}>No documents from your assigned clients yet.</Text>}
         />
       </View>
@@ -104,6 +109,7 @@ export default function ManagerHomeScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, padding: 20, backgroundColor: colors.bg },
   heading: { fontSize: 18, fontWeight: '700', marginBottom: 14, color: colors.text },
+  gridRow: { justifyContent: 'space-between' },
   docCard: {
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -113,9 +119,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
   },
-  docTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  docCardGrid: { width: '48%' },
+  spacer: { backgroundColor: 'transparent', borderColor: 'transparent' },
   docName: { fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 4 },
-  actions: { flexDirection: 'row', gap: 8 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   commentBox: {
     marginTop: 8,
     padding: 8,

@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { OutlineButton, Pill, ScreenContainer } from '../components/UI';
+import { OutlineButton, Pill, ScreenContainer, useGridColumns, padForGrid } from '../components/UI';
 import { Doc } from '../lib/types';
 
 export default function AccountantHomeScreen() {
   const [docs, setDocs] = useState<Doc[]>([]);
+  const columns = useGridColumns();
 
   const loadDocs = async () => {
     const { data } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
@@ -36,11 +37,16 @@ export default function AccountantHomeScreen() {
       <View style={styles.screen}>
         <Text style={styles.heading}>Assigned clients' documents</Text>
         <FlatList
-          data={docs}
-          keyExtractor={(d) => d.id}
-          renderItem={({ item }) => (
-            <View style={styles.docRow}>
-              <View style={{ flex: 1 }}>
+          key={columns} // RN requires a remount when numColumns changes
+          data={padForGrid(docs, columns)}
+          keyExtractor={(d, i) => d?.id ?? `spacer-${i}`}
+          numColumns={columns}
+          columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
+          renderItem={({ item }) =>
+            !item ? (
+              <View style={[styles.docCard, styles.docCardGrid, styles.spacer]} />
+            ) : (
+              <View style={[styles.docCard, columns === 2 && styles.docCardGrid]}>
                 <Text style={styles.docName}>{item.name}</Text>
                 <Pill status={item.status} />
                 {item.status === 'rework' && item.comment ? (
@@ -49,15 +55,19 @@ export default function AccountantHomeScreen() {
                     <Text style={styles.commentText}>{item.comment}</Text>
                   </View>
                 ) : null}
+                {item.status === 'pending' && (
+                  <View style={styles.actionRow}>
+                    <OutlineButton title="Mark Accounted" onPress={() => markAccounted(item.id)} />
+                  </View>
+                )}
+                {item.status === 'rework' && (
+                  <View style={styles.actionRow}>
+                    <OutlineButton title="Re-submit" onPress={() => resubmit(item.id)} />
+                  </View>
+                )}
               </View>
-              {item.status === 'pending' && (
-                <OutlineButton title="Mark Accounted" onPress={() => markAccounted(item.id)} />
-              )}
-              {item.status === 'rework' && (
-                <OutlineButton title="Re-submit" onPress={() => resubmit(item.id)} />
-              )}
-            </View>
-          )}
+            )
+          }
           ListEmptyComponent={<Text style={styles.empty}>Nothing in your queue yet.</Text>}
         />
       </View>
@@ -68,10 +78,8 @@ export default function AccountantHomeScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, padding: 20, backgroundColor: colors.bg },
   heading: { fontSize: 18, fontWeight: '700', marginBottom: 14, color: colors.text },
-  docRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  gridRow: { justifyContent: 'space-between' },
+  docCard: {
     paddingVertical: 12,
     paddingHorizontal: 14,
     marginBottom: 8,
@@ -80,6 +88,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
   },
+  docCardGrid: { width: '48%' },
+  spacer: { backgroundColor: 'transparent', borderColor: 'transparent' },
   docName: { fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 4 },
   commentBox: {
     marginTop: 8,
@@ -91,5 +101,6 @@ const styles = StyleSheet.create({
   },
   commentLabel: { fontSize: 10, fontWeight: '700', color: colors.textFaint, marginBottom: 2, textTransform: 'uppercase' },
   commentText: { fontSize: 13, color: colors.textDim },
+  actionRow: { marginTop: 10, alignItems: 'flex-start' },
   empty: { color: colors.textFaint, marginTop: 20, textAlign: 'center' },
 });

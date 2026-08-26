@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { ChipSelect, ScreenContainer } from '../components/UI';
+import { ChipSelect, ScreenContainer, useGridColumns, padForGrid } from '../components/UI';
 import { Profile } from '../lib/types';
 
 type ClientRow = {
@@ -28,6 +28,7 @@ export default function AccountantAssignmentScreen({ profile }: { profile: Profi
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [accountants, setAccountants] = useState<AccountantOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const columns = useGridColumns();
 
   const load = async () => {
     setLoading(true);
@@ -111,32 +112,39 @@ export default function AccountantAssignmentScreen({ profile }: { profile: Profi
           <Text style={styles.empty}>Loading...</Text>
         ) : (
           <FlatList
-            data={clients}
-            keyExtractor={(c) => c.client_org_id}
-            renderItem={({ item }) => (
-              <View style={styles.clientCard}>
-                <Text style={styles.clientName}>{item.client_org_name}</Text>
-                <ChipSelect
-                  options={accountants.map((a) => ({
-                    value: a.id,
-                    label:
-                      a.otherClients.length > 0
-                        ? `${a.name ?? 'Unnamed'} (${a.otherClients.length} other client${a.otherClients.length > 1 ? 's' : ''})`
-                        : `${a.name ?? 'Unnamed'} (no other clients)`,
-                  }))}
-                  value={item.current_accountant_id}
-                  onChange={(id) => assign(item.client_org_id, id)}
-                />
-                {item.current_accountant_id &&
-                  (() => {
-                    const current = accountants.find((a) => a.id === item.current_accountant_id);
-                    const others = (current?.otherClients ?? []).filter((n) => n !== item.client_org_name);
-                    return others.length > 0 ? (
-                      <Text style={styles.workloadText}>Also handles: {others.join(', ')}</Text>
-                    ) : null;
-                  })()}
-              </View>
-            )}
+            key={columns} // RN requires a remount when numColumns changes
+            data={padForGrid(clients, columns)}
+            keyExtractor={(c, i) => c?.client_org_id ?? `spacer-${i}`}
+            numColumns={columns}
+            columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
+            renderItem={({ item }) =>
+              !item ? (
+                <View style={[styles.clientCard, styles.clientCardGrid, styles.spacer]} />
+              ) : (
+                <View style={[styles.clientCard, columns === 2 && styles.clientCardGrid]}>
+                  <Text style={styles.clientName}>{item.client_org_name}</Text>
+                  <ChipSelect
+                    options={accountants.map((a) => ({
+                      value: a.id,
+                      label:
+                        a.otherClients.length > 0
+                          ? `${a.name ?? 'Unnamed'} (${a.otherClients.length} other client${a.otherClients.length > 1 ? 's' : ''})`
+                          : `${a.name ?? 'Unnamed'} (no other clients)`,
+                    }))}
+                    value={item.current_accountant_id}
+                    onChange={(id) => assign(item.client_org_id, id)}
+                  />
+                  {item.current_accountant_id &&
+                    (() => {
+                      const current = accountants.find((a) => a.id === item.current_accountant_id);
+                      const others = (current?.otherClients ?? []).filter((n) => n !== item.client_org_name);
+                      return others.length > 0 ? (
+                        <Text style={styles.workloadText}>Also handles: {others.join(', ')}</Text>
+                      ) : null;
+                    })()}
+                </View>
+              )
+            }
             ListEmptyComponent={<Text style={styles.empty}>You don't have any assigned clients yet.</Text>}
           />
         )}
@@ -149,6 +157,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, padding: 20, backgroundColor: colors.bg },
   heading: { fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 },
   subheading: { fontSize: 12, color: colors.textFaint, marginBottom: 16 },
+  gridRow: { justifyContent: 'space-between' },
   clientCard: {
     padding: 14,
     marginBottom: 10,
@@ -157,6 +166,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
   },
+  clientCardGrid: { width: '48%' },
+  spacer: { backgroundColor: 'transparent', borderColor: 'transparent' },
   clientName: { fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 8 },
   workloadText: { fontSize: 12, color: colors.textFaint, marginTop: 8, fontStyle: 'italic' },
   empty: { color: colors.textFaint, marginTop: 20, textAlign: 'center' },

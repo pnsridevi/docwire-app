@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, FlatList, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { PrimaryButton, OutlineButton, ChipSelect, ScreenContainer } from '../components/UI';
+import { PrimaryButton, OutlineButton, ChipSelect, ScreenContainer, useGridColumns, padForGrid } from '../components/UI';
 import { Profile, Task, TaskPriority, AssignableUser } from '../lib/types';
 
 type Filter = 'assigned_to_me' | 'created_by_me' | 'all';
@@ -31,6 +31,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
   const [assigneeKey, setAssigneeKey] = useState<string | null>(null);
 
   const dueDateValid = isValidDateString(dueDate.trim());
+  const columns = useGridColumns();
 
   const loadTasks = async () => {
     const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
@@ -301,33 +302,40 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
         )}
 
         <FlatList
+          key={columns} // RN requires a remount when numColumns changes
           style={{ marginTop: 16 }}
-          data={visibleTasks}
-          keyExtractor={(t) => t.id}
-          renderItem={({ item }) => (
-            <View style={styles.taskCard}>
-              <View style={styles.taskTopRow}>
-                <Text style={styles.taskTitle}>{item.title}</Text>
-                <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
-              </View>
-              {item.description ? <Text style={styles.taskDesc}>{item.description}</Text> : null}
-              <Text style={styles.taskMeta}>
-                {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
-                {item.due_date ? `  ·  due ${item.due_date}` : ''}
-              </Text>
-              <View style={styles.taskBottomRow}>
-                <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
-                  {item.status === 'completed' ? 'Completed' : 'In progress'}
+          data={padForGrid(visibleTasks, columns)}
+          keyExtractor={(t, i) => t?.id ?? `spacer-${i}`}
+          numColumns={columns}
+          columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
+          renderItem={({ item }) =>
+            !item ? (
+              <View style={[styles.taskCard, styles.taskCardGrid, styles.spacer]} />
+            ) : (
+              <View style={[styles.taskCard, columns === 2 && styles.taskCardGrid]}>
+                <View style={styles.taskTopRow}>
+                  <Text style={styles.taskTitle}>{item.title}</Text>
+                  <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
+                </View>
+                {item.description ? <Text style={styles.taskDesc}>{item.description}</Text> : null}
+                <Text style={styles.taskMeta}>
+                  {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
+                  {item.due_date ? `  ·  due ${item.due_date}` : ''}
                 </Text>
-                {item.status === 'in_progress' && item.assignee_id === profile.id && (
-                  <OutlineButton title="Mark complete" onPress={() => complete(item.id)} />
-                )}
-                {item.status === 'completed' && item.creator_id === profile.id && (
-                  <OutlineButton title="Reopen" onPress={() => reopen(item.id)} />
-                )}
+                <View style={styles.taskBottomRow}>
+                  <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
+                    {item.status === 'completed' ? 'Completed' : 'In progress'}
+                  </Text>
+                  {item.status === 'in_progress' && item.assignee_id === profile.id && (
+                    <OutlineButton title="Mark complete" onPress={() => complete(item.id)} />
+                  )}
+                  {item.status === 'completed' && item.creator_id === profile.id && (
+                    <OutlineButton title="Reopen" onPress={() => reopen(item.id)} />
+                  )}
+                </View>
               </View>
-            </View>
-          )}
+            )
+          }
           ListEmptyComponent={<Text style={styles.empty}>No tasks here yet.</Text>}
         />
       </View>
@@ -366,6 +374,7 @@ const styles = StyleSheet.create({
   inputError: { borderColor: colors.danger },
   errorText: { color: colors.danger, fontSize: 12, marginTop: -6, marginBottom: 10 },
   label: { fontSize: 12, fontWeight: '700', color: colors.textFaint, marginBottom: 6, marginTop: 2, textTransform: 'uppercase' },
+  gridRow: { justifyContent: 'space-between' },
   taskCard: {
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -375,6 +384,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
   },
+  taskCardGrid: { width: '48%' },
+  spacer: { backgroundColor: 'transparent', borderColor: 'transparent' },
   taskTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   taskTitle: { fontSize: 15, fontWeight: '600', color: colors.text, flex: 1, marginRight: 8 },
   priorityDot: { width: 10, height: 10, borderRadius: 5 },

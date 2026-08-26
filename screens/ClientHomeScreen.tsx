@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, FlatList, Switch, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { PrimaryButton, Pill, ScreenContainer } from '../components/UI';
+import { PrimaryButton, Pill, ScreenContainer, useGridColumns, padForGrid } from '../components/UI';
 import { Profile, Doc } from '../lib/types';
 
 export default function ClientHomeScreen({ profile }: { profile: Profile }) {
@@ -10,6 +10,7 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
   const [name, setName] = useState('');
   const [needsEntry, setNeedsEntry] = useState(true);
   const [loading, setLoading] = useState(false);
+  const columns = useGridColumns();
 
   const loadDocs = async () => {
     const { data } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
@@ -62,15 +63,22 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
         </View>
         <PrimaryButton title={loading ? 'Uploading...' : 'Upload document'} onPress={handleUpload} disabled={loading} />
         <FlatList
+          key={columns} // RN requires a remount when numColumns changes
           style={{ marginTop: 20 }}
-          data={docs}
-          keyExtractor={(d) => d.id}
-          renderItem={({ item }) => (
-            <View style={styles.docRow}>
-              <Text style={styles.docName}>{item.name}</Text>
-              <Pill status={item.status} />
-            </View>
-          )}
+          data={padForGrid(docs, columns)}
+          keyExtractor={(d, i) => d?.id ?? `spacer-${i}`}
+          numColumns={columns}
+          columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
+          renderItem={({ item }) =>
+            item ? (
+              <View style={[styles.docRow, columns === 2 && styles.docRowGrid]}>
+                <Text style={styles.docName}>{item.name}</Text>
+                <Pill status={item.status} />
+              </View>
+            ) : (
+              <View style={[styles.docRow, styles.docRowGrid, styles.spacer]} />
+            )
+          }
           ListEmptyComponent={<Text style={styles.empty}>No documents yet.</Text>}
         />
       </View>
@@ -91,6 +99,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  gridRow: { justifyContent: 'space-between' },
   docRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -103,6 +112,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
   },
+  docRowGrid: { width: '48%' },
+  spacer: { backgroundColor: 'transparent', borderColor: 'transparent' },
   docName: { fontSize: 15, fontWeight: '600', color: colors.text },
   empty: { color: colors.textFaint, marginTop: 20, textAlign: 'center' },
 });

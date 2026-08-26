@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { supabase, supabaseConfigError } from './lib/supabase';
 import { colors } from './theme/colors';
-import { OutlineButton, useIsWide, TabBar } from './components/UI';
+import { OutlineButton, useIsWide, SideNav, BottomTabBar } from './components/UI';
 import { Profile } from './lib/types';
 import LoginScreen from './screens/LoginScreen';
 import ClientHomeScreen from './screens/ClientHomeScreen';
@@ -11,11 +11,14 @@ import ManagerHomeScreen from './screens/ManagerHomeScreen';
 import TasksScreen from './screens/TasksScreen';
 import AccountantAssignmentScreen from './screens/AccountantAssignmentScreen';
 
-function Header({ role, onLogout }: { role: string; onLogout: () => void }) {
-  const isWide = useIsWide();
+// Mobile-only top bar: brand + role + logout. On desktop this same
+// information lives in SideNav instead (see components/UI.tsx), since a
+// wide layout has no separate header — the rail carries it. This
+// component is never rendered when isWide is true.
+function MobileHeader({ role, onLogout }: { role: string; onLogout: () => void }) {
   return (
-    <View style={[styles.header, isWide && styles.headerWide]}>
-      <View style={[styles.headerInner, isWide && { maxWidth: 720, width: '100%' }]}>
+    <View style={styles.header}>
+      <View style={styles.headerInner}>
         <View style={styles.brandRowSmall}>
           <View style={styles.brandMarkSmall}>
             <Text style={styles.brandMarkTextSmall}>DW</Text>
@@ -38,6 +41,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Documents');
+  const isWide = useIsWide();
 
   const loadProfile = async () => {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -94,6 +98,10 @@ export default function App() {
 
   const tabs = TABS_BY_ROLE[profile.role];
 
+  // Identical regardless of platform or nav style — this is "the same
+  // content" the person asked for. SideNav and BottomTabBar only decide
+  // WHICH tab is active and WHERE that control sits on screen; neither one
+  // touches what gets rendered here.
   const renderContent = () => {
     if (profile.role === 'client') {
       return activeTab === 'Tasks' ? <TasksScreen profile={profile} /> : <ClientHomeScreen profile={profile} />;
@@ -113,11 +121,27 @@ export default function App() {
     );
   };
 
+  const handleLogout = () => supabase.auth.signOut();
+
+  // Desktop/web: sidebar on the left, content fills the rest of the row.
+  // No top header here — SideNav already carries brand/role/logout.
+  if (isWide && tabs) {
+    return (
+      <SafeAreaView style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
+        <SideNav tabs={tabs} active={activeTab} onChange={setActiveTab} role={profile.role} onLogout={handleLogout} />
+        <View style={{ flex: 1 }}>{renderContent()}</View>
+      </SafeAreaView>
+    );
+  }
+
+  // Mobile/narrow: top header for brand/role/logout, content in the
+  // middle, bottom tab bar for section switching — the standard mobile
+  // pattern, and distinct from the desktop chrome above on purpose.
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Header role={profile.role} onLogout={() => supabase.auth.signOut()} />
-      {tabs && <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />}
-      {renderContent()}
+      <MobileHeader role={profile.role} onLogout={handleLogout} />
+      <View style={{ flex: 1 }}>{renderContent()}</View>
+      {tabs && <BottomTabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />}
     </SafeAreaView>
   );
 }
@@ -129,7 +153,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerWide: { alignItems: 'center' },
   headerInner: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -8,11 +8,33 @@ import { colors, statusStyle } from '../theme/colors';
 // centers it, instead of letting mobile-style full-bleed rows stretch
 // edge-to-edge across a wide window.
 const WIDE_BREAKPOINT = 768;
-const CONTENT_MAX_WIDTH = 720;
+export const CONTENT_MAX_WIDTH = 1080; // enough room for a real 2-column grid on desktop, not just a wider single column
+const GRID_BREAKPOINT = 1024; // below this, even on "wide", stack to a single column
 
 export function useIsWide() {
   const { width } = useWindowDimensions();
   return width >= WIDE_BREAKPOINT;
+}
+
+// Cards/lists use this to decide 1 vs 2 columns on desktop, so extra
+// horizontal space gets used for content instead of sitting empty as margin.
+export function useGridColumns(): 1 | 2 {
+  const { width } = useWindowDimensions();
+  return width >= GRID_BREAKPOINT ? 2 : 1;
+}
+
+// When a grid has an odd number of items, the last row's single card gets
+// pushed to one side by `columnWrapperStyle: { justifyContent: 'space-between' }`,
+// leaving a visible dead gap on the other side — the same empty-space
+// problem this whole layout pass was meant to fix, just relocated to the
+// last row. Padding the data with an invisible spacer keeps the grid
+// visually balanced. Returns null for spacer slots — render them as an
+// empty, borderless View matching the card width.
+export function padForGrid<T>(data: T[], columns: number): (T | null)[] {
+  if (columns < 2) return data;
+  const remainder = data.length % columns;
+  if (remainder === 0) return data;
+  return [...data, ...Array(columns - remainder).fill(null)];
 }
 
 export function ScreenContainer({ children }: { children: React.ReactNode }) {
@@ -91,9 +113,60 @@ export function CommentBox({
 }
 
 // Top-level section switcher (Documents / Tasks / Team). Deliberately not
-// a routing library — just local state in App.tsx — so switching sections
-// never requires a native rebuild, only `eas update`.
-export function TabBar({
+// Navigation chrome. Same tabs, same onChange contract, same screens behind
+// it — only WHERE the nav sits changes by platform:
+//   - Desktop/web (isWide): SideNav, a left rail. Carries brand + role +
+//     logout too, since on a wide layout there's no separate top header.
+//   - Mobile (narrow): BottomTabBar, a fixed row at the bottom. The brand/
+//     role/logout stays in App.tsx's top Header on mobile — a bottom bar
+//     is for section switching, not account actions.
+// App.tsx picks which one to render; the actual screens never know or care
+// which nav rendered them — same content, same logic, chrome only differs.
+export function SideNav({
+  tabs,
+  active,
+  onChange,
+  role,
+  onLogout,
+}: {
+  tabs: string[];
+  active: string;
+  onChange: (tab: string) => void;
+  role: string;
+  onLogout: () => void;
+}) {
+  return (
+    <View style={styles.sideNav}>
+      <View style={styles.sideBrandRow}>
+        <View style={styles.brandMarkSmall}>
+          <Text style={styles.brandMarkTextSmall}>DW</Text>
+        </View>
+        <Text style={styles.sideBrandText}>DocWire</Text>
+      </View>
+      <View style={styles.sideItems}>
+        {tabs.map((tab) => {
+          const isActive = tab === active;
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.sideItem, isActive && styles.sideItemActive]}
+              onPress={() => onChange(tab)}
+            >
+              <Text style={[styles.sideItemText, isActive && styles.sideItemTextActive]}>{tab}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={{ flex: 1 }} />
+      <View style={styles.sideFooter}>
+        <Text style={styles.roleLabel}>Signed in as {role}</Text>
+        <OutlineButton title="Log out" onPress={onLogout} />
+      </View>
+    </View>
+  );
+}
+
+export function BottomTabBar({
   tabs,
   active,
   onChange,
@@ -103,16 +176,13 @@ export function TabBar({
   onChange: (tab: string) => void;
 }) {
   return (
-    <View style={styles.tabBar}>
+    <View style={styles.bottomBar}>
       {tabs.map((tab) => {
         const isActive = tab === active;
         return (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tabItem, isActive && styles.tabItemActive]}
-            onPress={() => onChange(tab)}
-          >
-            <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{tab}</Text>
+          <TouchableOpacity key={tab} style={styles.bottomItem} onPress={() => onChange(tab)}>
+            <Text style={[styles.bottomItemText, isActive && styles.bottomItemTextActive]}>{tab}</Text>
+            {isActive && <View style={styles.bottomItemDot} />}
           </TouchableOpacity>
         );
       })}
@@ -195,22 +265,49 @@ const styles = StyleSheet.create({
     minHeight: 60,
     textAlignVertical: 'top',
   },
-  tabBar: {
-    flexDirection: 'row',
+  // SideNav — desktop/web left rail
+  sideNav: {
+    width: 220,
+    height: '100%',
     backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: 8,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    paddingVertical: 20,
   },
-  tabItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+  sideBrandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, marginBottom: 24 },
+  sideBrandText: { fontSize: 16, fontWeight: '700', color: colors.text },
+  brandMarkSmall: { width: 24, height: 24, borderRadius: 6, backgroundColor: colors.orange, alignItems: 'center', justifyContent: 'center' },
+  brandMarkTextSmall: { color: '#fff', fontWeight: '700', fontSize: 9 },
+  sideItems: { gap: 2 },
+  sideItem: {
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderLeftWidth: 3,
+    borderLeftColor: 'transparent',
   },
-  tabItemActive: { borderBottomColor: colors.orange },
-  tabText: { fontSize: 13, fontWeight: '600', color: colors.textFaint },
-  tabTextActive: { color: colors.text },
+  sideItemActive: { borderLeftColor: colors.orange, backgroundColor: colors.surface2 },
+  sideItemText: { fontSize: 14, fontWeight: '500', color: colors.textFaint },
+  sideItemTextActive: { color: colors.text, fontWeight: '700' },
+  sideFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 10,
+  },
+  roleLabel: { color: colors.textDim, fontSize: 13, textTransform: 'capitalize' },
+  // BottomTabBar — mobile fixed bottom row
+  bottomBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 8,
+  },
+  bottomItem: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 4 },
+  bottomItemText: { fontSize: 12, fontWeight: '600', color: colors.textFaint },
+  bottomItemTextActive: { color: colors.orange },
+  bottomItemDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.orange },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
   chip: {
     borderWidth: 1,
