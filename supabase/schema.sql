@@ -83,15 +83,56 @@ create policy "users_select_own" on users
 create policy "client_org_same_tenant" on client_organizations
   for select using (tenant_id = current_user_tenant());
 
+-- ------------------------------------------------------------
+-- manager_assignments
+-- ------------------------------------------------------------
 create policy "manager_assignments_own" on manager_assignments
   for select using (manager_id = auth.uid());
 
+-- Only Super Admin assigns a Client Org to a Manager (Architecture Section 8).
+-- No client_org_id ownership check needed here since Super Admin is platform-wide.
+create policy "manager_assignments_insert_super_admin" on manager_assignments
+  for insert with check (current_user_role() = 'super_admin');
+
+create policy "manager_assignments_update_super_admin" on manager_assignments
+  for update using (current_user_role() = 'super_admin');
+
+create policy "manager_assignments_delete_super_admin" on manager_assignments
+  for delete using (current_user_role() = 'super_admin');
+
+-- ------------------------------------------------------------
+-- accountant_assignments
+-- ------------------------------------------------------------
 create policy "accountant_assignments_own" on accountant_assignments
   for select using (
     accountant_id = auth.uid()
     or client_org_id in (select client_org_id from manager_assignments where manager_id = auth.uid())
   );
 
+-- A Manager can only assign an Accountant to a client THEY are themselves
+-- assigned to (Architecture Section 8: "a Manager cannot assign an Accountant
+-- to a client they have not themselves been assigned").
+create policy "accountant_assignments_insert_manager" on accountant_assignments
+  for insert with check (
+    current_user_role() = 'manager'
+    and client_org_id in (select client_org_id from manager_assignments where manager_id = auth.uid())
+  );
+
+create policy "accountant_assignments_update_manager" on accountant_assignments
+  for update using (
+    current_user_role() = 'manager'
+    and client_org_id in (select client_org_id from manager_assignments where manager_id = auth.uid())
+  );
+
+create policy "accountant_assignments_delete_manager" on accountant_assignments
+  for delete using (
+    current_user_role() = 'manager'
+    and client_org_id in (select client_org_id from manager_assignments where manager_id = auth.uid())
+  );
+
+-- ------------------------------------------------------------
+-- documents
+-- ------------------------------------------------------------
 create policy "documents_client_select_own" on documents
   for select using (
     current_user_role() = 'client' and uploaded_by = auth.uid()

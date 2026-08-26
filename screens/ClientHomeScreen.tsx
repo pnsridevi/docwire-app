@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, FlatList, Switch, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
-import { PrimaryButton, Pill } from '../components/UI';
+import { PrimaryButton, Pill, ScreenContainer } from '../components/UI';
 import { Profile, Doc } from '../lib/types';
 
 export default function ClientHomeScreen({ profile }: { profile: Profile }) {
@@ -29,7 +29,11 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
       uploaded_by: profile.id,
       name,
       needs_entry: needsEntry,
-      status: 'pending',
+      // A document not flagged "needs book entry" skips the workflow
+      // entirely and is just stored for reference (Architecture Section 6.2).
+      // Previously this always inserted as 'pending', which incorrectly
+      // routed non-entry documents into the Accountant's queue.
+      status: needsEntry ? 'pending' : 'filed',
     });
     setName('');
     await loadDocs();
@@ -37,38 +41,40 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <Text style={styles.heading}>Your documents</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Document name (e.g. Bank Statement - July)"
-        placeholderTextColor={colors.textFaint}
-        value={name}
-        onChangeText={setName}
-      />
-      <View style={styles.row}>
-        <Text style={{ color: colors.textDim }}>Needs book entry</Text>
-        <Switch
-          value={needsEntry}
-          onValueChange={setNeedsEntry}
-          trackColor={{ false: colors.border, true: colors.tint }}
-          thumbColor={needsEntry ? colors.orange : '#fff'}
+    <ScreenContainer>
+      <View style={styles.screen}>
+        <Text style={styles.heading}>Your documents</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Document name (e.g. Bank Statement - July)"
+          placeholderTextColor={colors.textFaint}
+          value={name}
+          onChangeText={setName}
+        />
+        <View style={styles.row}>
+          <Text style={{ color: colors.textDim }}>Needs book entry</Text>
+          <Switch
+            value={needsEntry}
+            onValueChange={setNeedsEntry}
+            trackColor={{ false: colors.border, true: colors.tint }}
+            thumbColor={needsEntry ? colors.orange : '#fff'}
+          />
+        </View>
+        <PrimaryButton title={loading ? 'Uploading...' : 'Upload document'} onPress={handleUpload} disabled={loading} />
+        <FlatList
+          style={{ marginTop: 20 }}
+          data={docs}
+          keyExtractor={(d) => d.id}
+          renderItem={({ item }) => (
+            <View style={styles.docRow}>
+              <Text style={styles.docName}>{item.name}</Text>
+              <Pill status={item.status} />
+            </View>
+          )}
+          ListEmptyComponent={<Text style={styles.empty}>No documents yet.</Text>}
         />
       </View>
-      <PrimaryButton title={loading ? 'Uploading...' : 'Upload document'} onPress={handleUpload} disabled={loading} />
-      <FlatList
-        style={{ marginTop: 20 }}
-        data={docs}
-        keyExtractor={(d) => d.id}
-        renderItem={({ item }) => (
-          <View style={styles.docRow}>
-            <Text style={styles.docName}>{item.name}</Text>
-            <Pill status={item.status} />
-          </View>
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>No documents yet.</Text>}
-      />
-    </View>
+    </ScreenContainer>
   );
 }
 

@@ -6,7 +6,9 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yourcompany.docwire"
@@ -28,6 +30,12 @@
       "eas": {
         "projectId": "4ebc2cea-3ec3-43e1-a45e-a5ba8a74bd21"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4ebc2cea-3ec3-43e1-a45e-a5ba8a74bd21"
     }
   }
 }
