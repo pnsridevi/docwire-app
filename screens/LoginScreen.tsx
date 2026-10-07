@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
 import { PrimaryButton } from '../components/UI';
@@ -7,6 +8,7 @@ import { PrimaryButton } from '../components/UI';
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -34,16 +36,25 @@ export default function LoginScreen() {
         value={email}
         onChangeText={setEmail}
       />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        placeholderTextColor={colors.textFaint}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
+      <View style={styles.passwordWrap}>
+        <TextInput
+          style={[styles.input, styles.passwordInput]}
+          placeholder="Password"
+          placeholderTextColor={colors.textFaint}
+          secureTextEntry={!showPassword}
+          value={password}
+          onChangeText={setPassword}
+        />
+        <TouchableOpacity
+          style={styles.eyeButton}
+          onPress={() => setShowPassword((s) => !s)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Feather name={showPassword ? 'eye-off' : 'eye'} size={17} color={colors.textFaint} />
+        </TouchableOpacity>
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {loading ? <ActivityIndicator color={colors.orange} /> : <PrimaryButton title="Log in" onPress={handleLogin} />}
+      {loading ? <ActivityIndicator color={colors.orange} /> : <PrimaryButton title="Log in" onPress={handleLogin} fullWidth />}
     </View>
   );
 }
@@ -65,5 +76,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface2,
     color: colors.text,
   },
+  passwordWrap: { width: '100%', maxWidth: 360, marginBottom: 12, position: 'relative', justifyContent: 'center' },
+  passwordInput: { paddingRight: 40, marginBottom: 0 },
+  eyeButton: { position: 'absolute', right: 12, height: '100%', justifyContent: 'center' },
   error: { color: colors.danger, marginBottom: 8 },
 });

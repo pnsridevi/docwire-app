@@ -14,10 +14,19 @@ export const colors = {
   tint: '#FEF1E5',
   grey: '#CDCDCB',
   danger: '#B23A1E',
-  // Demo's sidebar colors — not currently used now that SideNav uses
-  // surface/orange instead, kept here in case that changes later.
+  // Demo's sidebar colors — now actually wired into SideNav (see
+  // components/UI.tsx). Matches DocWire_demo_V1.html's .sidebar /
+  // .nav-item rules exactly:
+  //   .sidebar            { background: var(--sidebar); color: #5E3200; }
+  //   .side-label          { color: #8A4F0E; }
+  //   .nav-item.active     { color: #4A2700; border-left: 3px solid #4A2700;
+  //                          background: rgba(255,255,255,0.4); }
   sidebar: '#FBA45C',
-  sidebarActive: '#E56515',
+  sidebarActive: '#E56515', // defined in the demo's :root but not actually referenced by any of its rules — kept for parity, unused here too
+  sidebarText: '#5E3200',
+  sidebarTextActive: '#4A2700',
+  sidebarLabel: '#8A4F0E',
+  sidebarActiveOverlay: 'rgba(255,255,255,0.4)',
 };
 
 // Colors per document/task status, for the Pill component.
