@@ -17,6 +17,11 @@ import { canAddCategories } from '../lib/masterDocs';
 // firm-wide: anything a Manager adds shows up for every organisation.
 // Duplicates (ignoring capitals and spaces) are rejected by the database;
 // the message below says so in plain words.
+//
+// Hidden categories/sub-tags (Manage categories panel) are left out of the
+// lists — except the one already selected, so editing a document that
+// still uses a hidden category shows it instead of a blank field. The
+// database refuses a hidden one if it is newly chosen.
 export function MasterCategoryPicker({
   profile,
   categories,
@@ -34,11 +39,15 @@ export function MasterCategoryPicker({
   // the list. Returns the fresh list so the new entry can be selected.
   onCategoriesChanged: () => Promise<MasterCategory[]>;
 }) {
-  const topLevel = useMemo(() => categories.filter((c) => !c.parent_id), [categories]);
-  const subtags = useMemo(
-    () => (categoryId ? categories.filter((c) => c.parent_id === categoryId) : []),
+  const topLevel = useMemo(
+    () => categories.filter((c) => !c.parent_id && (!c.hidden || c.id === categoryId)),
     [categories, categoryId]
   );
+  const subtags = useMemo(
+    () => (categoryId ? categories.filter((c) => c.parent_id === categoryId && (!c.hidden || c.id === subtagId)) : []),
+    [categories, categoryId, subtagId]
+  );
+  const withHiddenMark = (c: MasterCategory) => (c.hidden ? `${c.name} (hidden)` : c.name);
   const allowAdd = canAddCategories(profile);
 
   const [adding, setAdding] = useState<'category' | 'subtag' | null>(null);
@@ -73,7 +82,7 @@ export function MasterCategoryPicker({
       // 23505 = unique violation: the name already exists (case/space-insensitive).
       setError(
         insertError?.code === '23505'
-          ? `"${name}" already exists${adding === 'subtag' ? ' under this category' : ''}. Pick it from the list instead.`
+          ? `"${name}" already exists${adding === 'subtag' ? ' under this category' : ''}. Pick it from the list instead — or, if it isn't listed, it has been hidden and can be shown again from Manage categories.`
           : insertError?.message ?? 'Could not add it.'
       );
       return;
@@ -91,7 +100,7 @@ export function MasterCategoryPicker({
       <View style={styles.fieldRow}>
         <View style={styles.dropdownWrap}>
           <Dropdown
-            options={topLevel.map((c) => ({ value: c.id, label: c.name }))}
+            options={topLevel.map((c) => ({ value: c.id, label: withHiddenMark(c) }))}
             value={categoryId}
             onChange={(v) => onChange(v, null)}
             placeholder="Choose a category"
@@ -108,7 +117,7 @@ export function MasterCategoryPicker({
       <View style={styles.fieldRow}>
         <View style={styles.dropdownWrap}>
           <Dropdown
-            options={[{ value: '', label: 'No sub-tag' }, ...subtags.map((s) => ({ value: s.id, label: s.name }))]}
+            options={[{ value: '', label: 'No sub-tag' }, ...subtags.map((s) => ({ value: s.id, label: withHiddenMark(s) }))]}
             value={subtagId ?? ''}
             onChange={(v) => onChange(categoryId, v || null)}
             placeholder={categoryId ? 'No sub-tag' : 'Choose a category first'}

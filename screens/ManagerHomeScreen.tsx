@@ -11,10 +11,14 @@ import { useBreakpoint } from '../components/useBreakpoint';
 import { Doc, Profile } from '../lib/types';
 import { useMasterDocMarking } from '../components/MasterDocControls';
 import { pickDocumentFile, uploadDocumentFile, deleteUploadedFile, getDocumentSignedUrl, displayFileName, PickedFile } from '../lib/storage';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 
 type TypeFilter = 'all' | 'entry' | 'filed' | 'rework';
 
-type AssignedClient = { id: string; name: string | null; client_org_id: string };
+// deactivated (Add_user_deactivation.sql): a deactivated Client keeps their
+// assignment row so their old documents stay visible and editable here, but
+// they're left out of every upload picker and "All Clients" broadcast.
+type AssignedClient = { id: string; name: string | null; client_org_id: string; deactivated: boolean };
 type OrgOption = { id: string; name: string };
 
 // Manager review screen. Phase 2, item D.2, later corrected against the
@@ -73,6 +77,8 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
   const masterDocs = useMasterDocMarking(profile);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [myClients, setMyClients] = useState<AssignedClient[]>([]);
+  // People who have been deactivated — shown as "Name (deactivated)".
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
   // myOrgs stays the broadest reachable set (every org in the tenant for
   // firm-wide staff, same as before) — still used for edit-rights checks
   // and the "All Organisations" broadcast. myOwnOrgs is new: it's always
@@ -104,6 +110,12 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
   // only). Only ever shown/usable when profile.firm_wide_staff is true.
   const [shareAllOrgs, setShareAllOrgs] = useState(false);
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  // Add_staff_book_entry.sql — "Needs book entry" on this upload (only
+  // offered when it's for specific Clients), and errors from the
+  // Send / Cancel book entry buttons.
+  const [uploadNeedsEntry, setUploadNeedsEntry] = useState(false);
+  const [entryBusyId, setEntryBusyId] = useState<string | null>(null);
+  const [entryError, setEntryError] = useState<{ id: string; message: string } | null>(null);
   const [clientsDropdownOpen, setClientsDropdownOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -135,11 +147,13 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
     const orgIds = Array.from(new Set(rows.map((r: any) => r.client_org_id))) as string[];
 
     const [{ data: people }, { data: orgs }] = await Promise.all([
-      clientIds.length ? supabase.from('users').select('id,name').in('id', clientIds) : Promise.resolve({ data: [] as any[] }),
+      clientIds.length ? supabase.from('users').select('id,name,deactivated_at').in('id', clientIds) : Promise.resolve({ data: [] as any[] }),
       orgIds.length ? supabase.from('client_organizations').select('id,name').in('id', orgIds) : Promise.resolve({ data: [] as any[] }),
     ]);
     const nameById: Record<string, string | null> = {};
     (people ?? []).forEach((p: any) => (nameById[p.id] = p.name));
+    const deactivatedById: Record<string, boolean> = {};
+    (people ?? []).forEach((p: any) => (deactivatedById[p.id] = !!p.deactivated_at));
     const orgNameById: Record<string, string> = {};
     (orgs ?? []).forEach((o: any) => (orgNameById[o.id] = o.name));
 
@@ -150,7 +164,14 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
     // even for firm-wide staff — hand-picking a named Client is for your
     // own clients specifically; reaching beyond that is what the "All
     // Organisations" broadcast is for, not the picker.
-    setMyClients(rows.map((r: any) => ({ id: r.client_id, name: nameById[r.client_id] ?? null, client_org_id: r.client_org_id })));
+    setMyClients(
+      rows.map((r: any) => ({
+        id: r.client_id,
+        name: nameById[r.client_id] ?? null,
+        client_org_id: r.client_org_id,
+        deactivated: !!deactivatedById[r.client_id],
+      }))
+    );
 
     // myOwnOrgs is always just the orgs from this person's real
     // client_assignments rows, firm-wide or not — this is what "All
@@ -202,11 +223,32 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
   useEffect(() => {
     loadMyClients();
     loadDocs();
+    loadDeactivatedIds().then(setDeactivatedIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const markReviewed = async (id: string) => {
     await supabase.from('documents').update({ status: 'reviewed' }).eq('id', id);
+    await loadDocs();
+  };
+
+  // A Client can't be deactivated while a document is waiting for them
+  // to reupload it (Add_user_deactivation.sql). If they've left and the
+  // file will never come, the Manager turns the request off here: the
+  // document stays in Rework, now waiting on the Accountant to fix the
+  // entry instead (the ordinary, entry-only Rework).
+  const stopWaitingForReupload = async (id: string) => {
+    const { data: updated, error } = await supabase
+      .from('documents')
+      .update({ reupload_requested: false, reupload_fulfilled: false })
+      .eq('id', id)
+      .select('id')
+      .single();
+    if (error || !updated) {
+      console.error('[ManagerHomeScreen] stopWaitingForReupload failed:', error);
+      setLoadError(error?.message ?? 'Could not update this document. Refresh and try again.');
+      return;
+    }
     await loadDocs();
   };
 
@@ -262,7 +304,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
   }, [myOrgs]);
 
   const clientDropdownOptions = useMemo(
-    () => myClients.map((c) => ({ id: c.id, label: `${orgNameById[c.client_org_id] ?? c.client_org_id} - ${c.name ?? 'Unnamed'}` })),
+    () => myClients.filter((c) => !c.deactivated).map((c) => ({ id: c.id, label: `${orgNameById[c.client_org_id] ?? c.client_org_id} - ${c.name ?? 'Unnamed'}` })),
     [myClients, orgNameById]
   );
 
@@ -276,6 +318,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
 
   const resetUploadForm = () => {
     setUploadName('');
+    setUploadNeedsEntry(false);
     setShareAccountant(false);
     setShareAllClients(false);
     setShareAllOrgs(false);
@@ -343,7 +386,11 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
     // selection — one function, one behavior, regardless of whether the
     // person picked every Client individually or used the toggle as a
     // shortcut for the same thing.
-    const effectiveClientIds = selectedClientIds.length > 0 ? selectedClientIds : shareAllClients ? myClients.map((c) => c.id) : [];
+    const effectiveClientIds = selectedClientIds.length > 0 ? selectedClientIds : shareAllClients ? myClients.filter((c) => !c.deactivated).map((c) => c.id) : [];
+
+    // Book entry only applies when the document is for specific Clients —
+    // each Client's copy lands as Pending for that Client's Accountant.
+    const entryOn = uploadNeedsEntry && effectiveClientIds.length > 0;
 
     const rows: DocRow[] =
       effectiveClientIds.length > 0
@@ -358,11 +405,12 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
               uploaded_by: profile.id,
               uploaded_by_name: profile.name,
               name: uploadName.trim(),
-              needs_entry: false,
-              status: 'filed',
+              needs_entry: entryOn,
+              status: entryOn ? 'pending' : 'filed',
               source: 'manager',
               shared_with_manager: false,
-              shared_with_accountant: shareAccountant,
+              // The Accountant must see it to do their part of book entry.
+              shared_with_accountant: shareAccountant || entryOn,
               shared_with_clients: true,
               file_path: filePath,
               file_size: fileSize,
@@ -474,7 +522,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
     return source === 'client' ? 'Client' : source === 'manager' ? 'Manager' : 'Accountant';
   }
 
-  const sourceLabel = (d: Doc) => `${d.uploaded_by_name ?? 'Someone'} (${roleLabel(d.source)})`;
+  const sourceLabel = (d: Doc) => `${nameWithStatus(d.uploaded_by_name, d.uploaded_by, deactivatedIds)} (${roleLabel(d.source)})`;
 
   const sharedWithLabel = (d: Doc) => {
     if (d.source === 'client') return 'Manager, Accountant';
@@ -536,7 +584,55 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
     return myOrgs.length > 0 && item.uploaded_by === profile.id;
   };
 
+  // ---------- Send / Cancel book entry (Add_staff_book_entry.sql) ----------
+  // For the current Manager or Accountant of the Client the document is
+  // about. The database checks the same.
+  const canManageEntry = (item: Doc) => !!item.client_id && myClients.some((c) => c.id === item.client_id);
+
+  const changeEntry = async (item: Doc, fn: 'send_document_for_entry' | 'cancel_document_entry') => {
+    if (entryBusyId) return;
+    setEntryBusyId(item.id);
+    setEntryError(null);
+    const { error } = await supabase.rpc(fn, { p_document_id: item.id });
+    setEntryBusyId(null);
+    if (error) {
+      setEntryError({ id: item.id, message: error.message });
+      return;
+    }
+    await loadDocs();
+  };
+
   const renderActions = (item: Doc) => {
+    const core = renderActionsCore(item);
+    const canSend = canManageEntry(item) && !item.needs_entry && item.status === 'filed';
+    const canCancel = canManageEntry(item) && item.needs_entry && item.status === 'pending' && !!item.entry_requested_by;
+    const sentNote = item.entry_requested_by
+      ? `Sent for book entry by ${nameWithStatus(item.entry_requested_by_name, item.entry_requested_by, deactivatedIds)}${
+          item.entry_requested_at ? ` on ${new Date(item.entry_requested_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''
+        }`
+      : null;
+    if (!canSend && !canCancel && !sentNote) return core;
+    const busy = entryBusyId === item.id;
+    return (
+      <View>
+        {core}
+        {sentNote && <Text style={styles.entryNote}>{sentNote}</Text>}
+        {(canSend || canCancel) && (
+          <View style={styles.actions}>
+            {canSend && (
+              <OutlineButton title={busy ? 'Sending...' : 'Send for book entry'} onPress={() => changeEntry(item, 'send_document_for_entry')} />
+            )}
+            {canCancel && (
+              <OutlineButton title={busy ? 'Cancelling...' : 'Cancel book entry'} onPress={() => changeEntry(item, 'cancel_document_entry')} />
+            )}
+          </View>
+        )}
+        {entryError?.id === item.id && <Text style={styles.errorText}>{entryError.message}</Text>}
+      </View>
+    );
+  };
+
+  const renderActionsCore = (item: Doc) => {
     // Was: `if (item.source === 'client')`. Same bug as
     // AccountantHomeScreen.tsx's renderActions — a Task-linked document
     // created via a Manager or Accountant's immediate-creation path can
@@ -556,9 +652,15 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
                 <Text style={styles.commentMeta}>
                   {item.reupload_fulfilled ? 'Client has reuploaded — ready for the Accountant.' : 'Waiting on the Client to reupload the document.'}
                 </Text>
-              ) : (
+              ) : null}
+              {item.reupload_requested && !item.reupload_fulfilled ? (
+                <TouchableOpacity onPress={() => stopWaitingForReupload(item.id)}>
+                  <Text style={styles.stopWaitingLink}>Stop waiting for reupload (the Accountant fixes the entry instead)</Text>
+                </TouchableOpacity>
+              ) : null}
+              {!item.reupload_requested ? (
                 <Text style={styles.commentMeta}>Waiting on the Accountant to re-submit</Text>
-              )}
+              ) : null}
             </View>
           ) : null}
           {item.status === 'accounted' && reworkDraftId !== item.id && (
@@ -570,10 +672,14 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
           {reworkDraftId === item.id && (
             <View>
               <CommentBox value={reworkComment} onChangeText={setReworkComment} placeholder="What needs to be fixed?" />
-              <TouchableOpacity style={styles.checkboxRow} onPress={() => setReworkNeedsReupload((v) => !v)}>
-                <Feather name={reworkNeedsReupload ? 'check-square' : 'square'} size={16} color={reworkNeedsReupload ? colors.orange : colors.textFaint} />
-                <Text style={styles.checkboxLabel}>The document itself needs to be reuploaded (not just the entry fixed)</Text>
-              </TouchableOpacity>
+              {/* Only a Client's own upload can be reuploaded — a staff document
+                  has no Client to send it back to (enforced in the database). */}
+              {item.source === 'client' && (
+                <TouchableOpacity style={styles.checkboxRow} onPress={() => setReworkNeedsReupload((v) => !v)}>
+                  <Feather name={reworkNeedsReupload ? 'check-square' : 'square'} size={16} color={reworkNeedsReupload ? colors.orange : colors.textFaint} />
+                  <Text style={styles.checkboxLabel}>The document itself needs to be reuploaded (not just the entry fixed)</Text>
+                </TouchableOpacity>
+              )}
               <View style={styles.actions}>
                 <OutlineButton title="Cancel" onPress={cancelRework} />
                 <DangerOutlineButton title="Confirm Rework" onPress={() => confirmRework(item.id)} />
@@ -605,7 +711,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
       {loadError && <Text style={styles.errorBanner}>Error: {loadError}</Text>}
 
       {myClients.length > 0 && (
-        <Text style={styles.clientsLine}>Your clients: {myClients.map((c) => c.name ?? 'Unnamed').join(', ')}</Text>
+        <Text style={styles.clientsLine}>Your clients: {myClients.filter((c) => !c.deactivated).map((c) => c.name ?? 'Unnamed').join(', ')}</Text>
       )}
 
       {showUploadForm && (
@@ -713,6 +819,19 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
           )}
 
           <View style={{ marginTop: 12 }}>
+            {(selectedClientIds.length > 0 || shareAllClients) && (
+              <>
+                <TouchableOpacity style={styles.entryCheckRow} onPress={() => setUploadNeedsEntry((v) => !v)}>
+                  <Feather name={uploadNeedsEntry ? 'check-square' : 'square'} size={16} color={uploadNeedsEntry ? colors.orange : colors.textFaint} />
+                  <Text style={styles.entryCheckLabel}>Needs book entry</Text>
+                </TouchableOpacity>
+                {uploadNeedsEntry && (
+                  <Text style={styles.entryHint}>
+                    Each Client's copy lands as Pending for that Client's Accountant, and is shared with the Accountant automatically.
+                  </Text>
+                )}
+              </>
+            )}
             <PrimaryButton title={uploading ? 'Uploading...' : 'Upload'} onPress={handleUpload} disabled={uploading || !uploadName.trim() || !pickedFile} />
           </View>
         </View>
@@ -777,7 +896,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
                 {item.source === 'client' ? (
                   <Text style={styles.docMeta}>
                     {item.client_org_name ?? 'Unknown client'}
-                    {item.uploaded_by_name ? `  ·  Uploaded by ${item.uploaded_by_name}` : ''}
+                    {item.uploaded_by_name ? `  ·  Uploaded by ${nameWithStatus(item.uploaded_by_name, item.uploaded_by, deactivatedIds)}` : ''}
                   </Text>
                 ) : (
                   <Text style={styles.docMeta}>
@@ -824,7 +943,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
                     <Text style={styles.clientIdentityText}>
                       {item.client_org_id
                         ? item.client_id
-                          ? item.client_name ?? 'Unnamed'
+                          ? nameWithStatus(item.client_name ?? 'Unnamed', item.client_id, deactivatedIds)
                           : 'All Clients'
                         : item.shared_with_user_name
                         ? `Direct to ${item.shared_with_user_name}`
@@ -857,6 +976,7 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
 }
 
 const styles = StyleSheet.create({
+  stopWaitingLink: { fontSize: 11.5, fontWeight: '600', color: colors.orange, textDecorationLine: 'underline', marginTop: 4 },
   screen: { padding: 20, backgroundColor: colors.bg },
   screenPhone: { flex: 1 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 },
@@ -986,6 +1106,10 @@ const styles = StyleSheet.create({
   clientOrgText: { fontSize: 12, fontWeight: '600', color: colors.text },
   clientIdentityText: { fontSize: 11, color: colors.textFaint, marginTop: 2 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  entryCheckRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, marginBottom: 4 },
+  entryCheckLabel: { fontSize: 13, color: colors.text, fontWeight: '600' },
+  entryHint: { fontSize: 11.5, color: colors.textFaint, marginBottom: 8 },
+  entryNote: { fontSize: 11, color: colors.textFaint, fontStyle: 'italic', marginTop: 6 },
   commentBox: {
     marginTop: 8,
     padding: 8,

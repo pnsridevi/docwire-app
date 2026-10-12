@@ -9,7 +9,9 @@ import { DatePicker } from '../components/DatePicker';
 import { ResponsiveGrid } from '../components/ResponsiveGrid';
 import { DataTable } from '../components/DataTable';
 import { useBreakpoint } from '../components/useBreakpoint';
-import { Profile, Task, TaskPriority, AssignableUser, AssignedClientOption, Role, RecurrenceTerm } from '../lib/types';
+import { Profile, Task, TaskPriority, AssignableUser, AssignedClientOption, Role, RecurrenceTerm, TaskActivity, ReassignOption } from '../lib/types';
+import { Dropdown } from '../components/Dropdown';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 import { pickDocumentFile, uploadDocumentFile, deleteUploadedFile, getDocumentSignedUrl, PickedFile } from '../lib/storage';
 
 type Filter = 'assigned_to_me' | 'created_by_me' | 'all';
@@ -23,6 +25,20 @@ function isOverdue(t: Task, todayStr: string): boolean {
 function recurrenceLabel(term: RecurrenceTerm | null): string {
   if (!term) return '';
   return term.charAt(0).toUpperCase() + term.slice(1);
+}
+
+// "Open" exactly as the database counts it (Add_user_deactivation.sql,
+// is_task_open): in progress, or a recurring task whose next copy hasn't
+// been made yet — the daily job would otherwise create the next copy for
+// whoever it's assigned to.
+function isTaskOpen(t: Task): boolean {
+  return t.status === 'in_progress' || (t.recurring && !t.next_occurrence_generated_at && !!t.due_date);
+}
+
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function roleLabel(r: Role): string {
@@ -122,6 +138,23 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
   const [fulfillLoading, setFulfillLoading] = useState(false);
   const [fulfillPickedFile, setFulfillPickedFile] = useState<PickedFile | null>(null);
 
+  // Add_user_deactivation.sql
+  // - deactivatedIds: shown as "Name (deactivated)" on old tasks.
+  // - activityByTask: each task's history (reassignments, closures),
+  //   newest first; only the latest line is shown on the task.
+  // - managedClientIds: every Client this Manager is CURRENTLY assigned
+  //   to (deactivated ones included) — a Manager can reassign open tasks
+  //   about these Clients, and close/stop tasks whose creator or
+  //   assignee was deactivated. The database checks the same thing.
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
+  const [activityByTask, setActivityByTask] = useState<Record<string, TaskActivity[]>>({});
+  const [managedClientIds, setManagedClientIds] = useState<Set<string>>(new Set());
+  const [reassigningTaskId, setReassigningTaskId] = useState<string | null>(null);
+  const [reassignOptions, setReassignOptions] = useState<ReassignOption[]>([]);
+  const [reassignTo, setReassignTo] = useState<string | null>(null);
+  const [taskActionBusy, setTaskActionBusy] = useState(false);
+  const [taskActionError, setTaskActionError] = useState<{ taskId: string; message: string } | null>(null);
+
   const todayStr = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -137,6 +170,23 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
     }
     setLoadError(null);
     setTasks((data as Task[]) ?? []);
+
+    // Task history — the database only returns entries for tasks this
+    // person can see.
+    const { data: activity, error: activityError } = await supabase
+      .from('task_activity')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (activityError) {
+      // History is extra information — never blocks the task list.
+      console.error('[TasksScreen] loading task history failed:', activityError);
+      return;
+    }
+    const grouped: Record<string, TaskActivity[]> = {};
+    ((activity as TaskActivity[]) ?? []).forEach((a) => {
+      (grouped[a.task_id] = grouped[a.task_id] ?? []).push(a);
+    });
+    setActivityByTask(grouped);
   };
 
   // Client -> their currently-assigned Manager + Accountant, from
@@ -218,8 +268,10 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
       const counterpartIds = Array.from(new Set(rows.map((r: any) => r[counterpartRoleKey]))) as string[];
       const orgIds = Array.from(new Set(rows.map((r: any) => r.client_org_id))) as string[];
 
+      if (profile.role === 'manager') setManagedClientIds(new Set(clientIds as string[]));
+
       const [{ data: clientPeople }, { data: counterpartPeople }, { data: orgs }] = await Promise.all([
-        supabase.from('users').select('id,name').in('id', clientIds),
+        supabase.from('users').select('id,name,deactivated_at').in('id', clientIds),
         counterpartIds.length ? supabase.from('users').select('id,name').in('id', counterpartIds) : Promise.resolve({ data: [] as any[] }),
         supabase.from('client_organizations').select('id,name').in('id', orgIds),
       ]);
@@ -230,8 +282,13 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
       const orgNameById: Record<string, string> = {};
       (orgs ?? []).forEach((o: any) => (orgNameById[o.id] = o.name));
 
+      // A deactivated Client keeps their assignment row (so their old
+      // tasks and documents stay visible), but can't be given new tasks.
+      const deactivatedClientIds = new Set(
+        (clientPeople ?? []).filter((p: any) => !!p.deactivated_at).map((p: any) => p.id as string)
+      );
       setAssignedClients(
-        rows.map((r: any) => ({
+        rows.filter((r: any) => !deactivatedClientIds.has(r.client_id)).map((r: any) => ({
           client_id: r.client_id,
           client_name: clientNameById[r.client_id] ?? null,
           client_org_id: r.client_org_id,
@@ -248,6 +305,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
   useEffect(() => {
     loadTasks();
     loadAssignableUsers();
+    loadDeactivatedIds().then(setDeactivatedIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -667,11 +725,16 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
             onChangeText={setDescription}
             multiline
           />
-          <DatePicker
-            value={dueDate}
-            onChange={setDueDate}
-            placeholder={recurring ? 'Due date (required for recurring)' : 'Due date (optional)'}
-          />
+          {/* Same 420 cap as the Title/Description inputs above — DatePicker's
+              field has no width of its own, so without this it stretched
+              across the whole form on desktop. */}
+          <View style={{ maxWidth: 420 }}>
+            <DatePicker
+              value={dueDate}
+              onChange={setDueDate}
+              placeholder={recurring ? 'Due date (required for recurring)' : 'Due date (optional)'}
+            />
+          </View>
 
           <View style={styles.recurringRow}>
             <Text style={styles.label}>Recurring</Text>
@@ -928,19 +991,132 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
   // Reopen). OutlineButton has no disabled prop in this codebase, so
   // withholding the button entirely — with an explanatory line in its
   // place — rather than rendering it disabled.
+  // ---------- Reassign / close (Add_user_deactivation.sql) ----------
+
+  const canSupervise = (item: Task) =>
+    profile.role === 'manager' && !!item.client_id && managedClientIds.has(item.client_id);
+
+  const startReassign = async (item: Task) => {
+    setReassigningTaskId(item.id);
+    setReassignTo(null);
+    setReassignOptions([]);
+    setTaskActionError(null);
+    const { data, error } = await supabase.rpc('task_reassign_options', { p_task_id: item.id });
+    if (error) {
+      setTaskActionError({ taskId: item.id, message: error.message });
+      return;
+    }
+    setReassignOptions((data as ReassignOption[]) ?? []);
+  };
+
+  const saveReassign = async (item: Task) => {
+    if (!reassignTo) return;
+    setTaskActionBusy(true);
+    setTaskActionError(null);
+    const { error } = await supabase.rpc('reassign_task', { p_task_id: item.id, p_new_assignee: reassignTo });
+    setTaskActionBusy(false);
+    if (error) {
+      setTaskActionError({ taskId: item.id, message: error.message });
+      return;
+    }
+    setReassigningTaskId(null);
+    await loadTasks();
+  };
+
+  // Close, or stop the repeating of, a task whose creator or assignee
+  // has been deactivated — nobody else could end it otherwise.
+  const superviseTask = async (item: Task, action: 'complete' | 'stop_repeating') => {
+    setTaskActionBusy(true);
+    setTaskActionError(null);
+    const { error } = await supabase.rpc('supervise_task', { p_task_id: item.id, p_action: action });
+    setTaskActionBusy(false);
+    if (error) {
+      setTaskActionError({ taskId: item.id, message: error.message });
+      return;
+    }
+    await loadTasks();
+  };
+
+  const renderSupervision = (item: Task) => {
+    const supervise = canSupervise(item);
+    const latest = activityByTask[item.id]?.[0];
+    const departed = deactivatedIds.has(item.creator_id) || deactivatedIds.has(item.assignee_id);
+    const showReassign = supervise && isTaskOpen(item);
+    const showClose = supervise && departed && item.status === 'in_progress';
+    const showStop = supervise && departed && item.recurring && !item.next_occurrence_generated_at;
+    if (!latest && !showReassign && !showClose && !showStop) return null;
+    return (
+      <View style={styles.supervisionWrap}>
+        {latest && (
+          <Text style={styles.activityText}>
+            ↪ {latest.details} · {formatShortDate(latest.created_at)}
+          </Text>
+        )}
+        {reassigningTaskId === item.id ? (
+          <View style={styles.reassignRow}>
+            {reassignOptions.length === 0 ? (
+              <Text style={styles.taskMeta}>Loading who can take it…</Text>
+            ) : (
+              <View style={styles.reassignDropdown}>
+                <Dropdown
+                  options={reassignOptions.map((o) => ({ value: o.id, label: `${o.name ?? 'Unnamed'} (${roleLabel(o.role)})` }))}
+                  value={reassignTo}
+                  onChange={setReassignTo}
+                  placeholder="Give it to..."
+                />
+              </View>
+            )}
+            <TouchableOpacity disabled={!reassignTo || taskActionBusy} onPress={() => saveReassign(item)}>
+              <Text style={[styles.actionLinkStrong, (!reassignTo || taskActionBusy) && { opacity: 0.5 }]}>
+                {taskActionBusy ? 'Saving…' : 'Reassign'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity disabled={taskActionBusy} onPress={() => setReassigningTaskId(null)}>
+              <Text style={styles.actionLink}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          (showReassign || showClose || showStop) && (
+            <View style={styles.reassignRow}>
+              {showReassign && (
+                <TouchableOpacity onPress={() => startReassign(item)}>
+                  <Text style={styles.actionLinkStrong}>Reassign</Text>
+                </TouchableOpacity>
+              )}
+              {showClose && (
+                <TouchableOpacity disabled={taskActionBusy} onPress={() => superviseTask(item, 'complete')}>
+                  <Text style={styles.actionLink}>Close task</Text>
+                </TouchableOpacity>
+              )}
+              {showStop && (
+                <TouchableOpacity disabled={taskActionBusy} onPress={() => superviseTask(item, 'stop_repeating')}>
+                  <Text style={styles.actionLink}>Stop repeating</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )
+        )}
+        {taskActionError?.taskId === item.id && <Text style={styles.actionError}>{taskActionError.message}</Text>}
+      </View>
+    );
+  };
+
   const renderStatusAndActions = (item: Task) => {
     const awaitingFulfillment = !!item.linked_document_name && !item.linked_document_id;
     const canComplete = item.status === 'in_progress' && item.assignee_id === profile.id;
     return (
-      <View style={styles.taskBottomRow}>
-        <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
-          {item.status === 'completed' ? 'Completed' : 'In progress'}
-        </Text>
-        {canComplete && awaitingFulfillment && <Text style={styles.completeBlockedText}>Upload the document to complete this task</Text>}
-        {canComplete && !awaitingFulfillment && <OutlineButton title="Mark complete" onPress={() => complete(item.id)} />}
-        {item.status === 'completed' && item.creator_id === profile.id && (
-          <OutlineButton title="Reopen" onPress={() => reopen(item.id)} />
-        )}
+      <View>
+        <View style={styles.taskBottomRow}>
+          <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
+            {item.status === 'completed' ? 'Completed' : 'In progress'}
+          </Text>
+          {canComplete && awaitingFulfillment && <Text style={styles.completeBlockedText}>Upload the document to complete this task</Text>}
+          {canComplete && !awaitingFulfillment && <OutlineButton title="Mark complete" onPress={() => complete(item.id)} />}
+          {item.status === 'completed' && item.creator_id === profile.id && (
+            <OutlineButton title="Reopen" onPress={() => reopen(item.id)} />
+          )}
+        </View>
+        {renderSupervision(item)}
       </View>
     );
   };
@@ -1071,7 +1247,8 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                   {renderDocLink(item)}
                   {renderFulfillPanel(item)}
                   <Text style={styles.taskMeta}>
-                    {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
+                    {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
+                    {nameWithStatus(item.assignee_name, item.assignee_id, deactivatedIds)}
                     {item.client_org_name ? `  ·  ${item.client_org_name}` : ''}
                     {item.due_date ? `  ·  due ${item.due_date}` : ''}
                   </Text>
@@ -1116,7 +1293,8 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                 width: 190,
                 render: (item) => (
                   <Text style={styles.taskMeta}>
-                    {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
+                    {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
+                    {nameWithStatus(item.assignee_name, item.assignee_id, deactivatedIds)}
                   </Text>
                 ),
               },
@@ -1175,7 +1353,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                   </View>
                 ),
               },
-              { key: 'status', header: 'Status', width: 200, render: renderStatusAndActions },
+              { key: 'status', header: 'Status', width: 250, render: renderStatusAndActions },
             ]}
           />
         )}
@@ -1319,6 +1497,13 @@ const styles = StyleSheet.create({
   taskDesc: { fontSize: 13, color: colors.textDim, marginTop: 4 },
   taskMeta: { fontSize: 12, color: colors.textFaint, marginTop: 6 },
   taskBottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+  supervisionWrap: { marginTop: 8, gap: 6 },
+  activityText: { fontSize: 11.5, color: colors.textDim, fontStyle: 'italic' },
+  reassignRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12 },
+  reassignDropdown: { minWidth: 160, maxWidth: 240, flexGrow: 1, flexShrink: 1 },
+  actionLink: { fontSize: 12, fontWeight: '600', color: colors.textDim },
+  actionLinkStrong: { fontSize: 12, fontWeight: '700', color: colors.orange },
+  actionError: { fontSize: 11.5, color: colors.danger },
   statusText: { fontSize: 12, fontWeight: '700', color: colors.orange },
   statusDone: { color: colors.textFaint },
   empty: { color: colors.textFaint, marginTop: 20, textAlign: 'center' },

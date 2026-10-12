@@ -112,11 +112,18 @@ Deno.serve(async (req) => {
 
     const { data: callerProfile, error: callerProfileError } = await callerClient
       .from('users')
-      .select('id, tenant_id, client_org_id, role')
+      .select('id, tenant_id, client_org_id, role, deactivated_at')
       .eq('id', callerAuthUser.id)
       .single();
     if (callerProfileError || !callerProfile) {
       return jsonResponse({ error: 'Could not load caller profile.' }, 403);
+    }
+    // A deactivated person can still read their own row (so the app can
+    // sign them out), so this must be checked explicitly — everything
+    // below uses the service role, which the database's own "active
+    // users only" rule doesn't apply to.
+    if (callerProfile.deactivated_at) {
+      return jsonResponse({ error: 'Your account has been deactivated.' }, 403);
     }
 
     // Service-role client — only used AFTER the caller has been
@@ -163,8 +170,9 @@ Deno.serve(async (req) => {
       resolvedClientOrgId = callerProfile.client_org_id;
 
       // Seat limit check (Roles doc: "Cannot exceed the seat limit set
-      // by Super Admin") — counts everyone currently in the org against
-      // the cap before creating one more.
+      // by Super Admin") — counts everyone currently ACTIVE in the org
+      // against the cap before creating one more. Deactivated users
+      // (Add_user_deactivation.sql) don't hold a seat.
       const { data: org, error: orgError } = await adminClient
         .from('client_organizations')
         .select('seat_limit')
@@ -176,7 +184,8 @@ Deno.serve(async (req) => {
       const { count, error: countError } = await adminClient
         .from('users')
         .select('id', { count: 'exact', head: true })
-        .eq('client_org_id', resolvedClientOrgId);
+        .eq('client_org_id', resolvedClientOrgId)
+        .is('deactivated_at', null);
       if (countError) {
         return jsonResponse({ error: 'Could not check seat usage.' }, 500);
       }

@@ -9,10 +9,14 @@ import { ResponsiveGrid } from '../components/ResponsiveGrid';
 import { DataTable } from '../components/DataTable';
 import { Dropdown } from '../components/Dropdown';
 import { MasterCategoryPicker } from '../components/MasterCategoryPicker';
+import { MasterCategoryManager } from '../components/MasterCategoryManager';
 import { useBreakpoint } from '../components/useBreakpoint';
 import { pickDocumentFile, uploadDocumentFile, deleteUploadedFile, getDocumentSignedUrl, displayFileName, PickedFile } from '../lib/storage';
 import {
   OrgOption,
+  canChangeMasterDoc,
+  canDeleteMasterDocs,
+  canManageCategories,
   categoryLabel,
   formatShortDate,
   loadAccessibleOrgs,
@@ -20,6 +24,7 @@ import {
   loadMasterDocuments,
 } from '../lib/masterDocs';
 import { MasterCategory, MasterDocument, MasterDocumentLogEntry, MasterDocumentVersion, Profile } from '../lib/types';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 
 type StatusFilter = 'active' | 'deleted';
 const ALL = '__all__';
@@ -36,11 +41,24 @@ const ALL = '__all__';
 // There is no approval step. Replacing a file keeps the old one as a
 // version, every change is written to a log by the database itself, and
 // Delete only hides a document (it can be restored from the Deleted
-// filter). So every action here is safe to offer to everyone who can see
-// the document.
+// filter).
+//
+// Who can do what (Update_master_documents_permissions.sql — enforced by
+// the database; the helpers in lib/masterDocs.ts only decide which
+// buttons to show):
+//   Staff / Super Admin     replace, edit, restore an older version,
+//                           delete and restore, on every document they see
+//   Client / Client Admin   upload; replace, edit and restore an older
+//                           version only on client-owned documents
+//                           (documents added by the firm are view-only);
+//                           never delete or restore, and the Deleted
+//                           filter isn't shown to them
+//   Managers / Super Admin  also manage the category list
 export default function MasterDocsScreen({ profile }: { profile: Profile }) {
   const breakpoint = useBreakpoint();
   const isClientSide = profile.role === 'client' || profile.role === 'client_admin';
+  const canDelete = canDeleteMasterDocs(profile);
+  const canManage = canManageCategories(profile);
 
   const [docs, setDocs] = useState<MasterDocument[]>([]);
   const [categories, setCategories] = useState<MasterCategory[]>([]);
@@ -80,6 +98,15 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
   const [versions, setVersions] = useState<MasterDocumentVersion[]>([]);
   const [logEntries, setLogEntries] = useState<MasterDocumentLogEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [confirmRestorePath, setConfirmRestorePath] = useState<string | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // Manage categories panel
+  const [managingCategories, setManagingCategories] = useState(false);
+
+  // People who have been deactivated — shown as "Name (deactivated)".
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
 
   const reloadDocs = async () => {
     const { data, error } = await loadMasterDocuments();
@@ -116,7 +143,7 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
     (async () => {
       setLoading(true);
       setLoadError(null);
-      await Promise.all([reloadDocs(), reloadCategories(), reloadOrgs()]);
+      await Promise.all([reloadDocs(), reloadCategories(), reloadOrgs(), loadDeactivatedIds().then(setDeactivatedIds)]);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -286,6 +313,8 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
 
   const openHistory = async (doc: MasterDocument) => {
     setHistoryDoc(doc);
+    setConfirmRestorePath(null);
+    setHistoryError(null);
     setHistoryLoading(true);
     const [v, l] = await Promise.all([
       supabase.from('master_document_versions').select('*').eq('master_document_id', doc.id).order('version_number', { ascending: false }),
@@ -295,6 +324,32 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
     setVersions((v.data as MasterDocumentVersion[]) ?? []);
     setLogEntries((l.data as MasterDocumentLogEntry[]) ?? []);
     setHistoryLoading(false);
+  };
+
+  // "Make this the current version": sends the older file's path as the
+  // new current file. The database recognises it as one of this
+  // document's own older files, keeps the current file as a version,
+  // saves the old file as a NEW version number (nothing is discarded) and
+  // logs it as a restore. File size and type are taken from the kept
+  // version by the database, not from here.
+  const restoreVersion = async (v: MasterDocumentVersion) => {
+    if (!historyDoc) return;
+    setRestoringVersion(true);
+    setHistoryError(null);
+    const { data: updated, error } = await supabase
+      .from('master_documents')
+      .update({ file_path: v.file_path })
+      .eq('id', historyDoc.id)
+      .select('*')
+      .single();
+    setRestoringVersion(false);
+    setConfirmRestorePath(null);
+    if (error || !updated) {
+      console.error('[MasterDocsScreen] restore version failed:', error);
+      setHistoryError(error?.message ?? 'Could not restore this version. Refresh and try again.');
+      return;
+    }
+    await Promise.all([openHistory(updated as MasterDocument), reloadDocs()]);
   };
 
   // ---------- Derived data ----------
@@ -341,7 +396,7 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
     profile.role === 'super_admin'
       ? "Every client organisation's permanent reference documents."
       : isClientSide
-        ? 'Permanent reference documents for your organisation. Everyone in your organisation can see these.'
+        ? 'Permanent reference documents for your organisation. Everyone in your organisation can see these. Documents from your firm are view-only.'
         : profile.firm_wide_staff
           ? 'Permanent reference documents for every client organisation.'
           : 'Permanent reference documents for the organisations you serve.';
@@ -368,16 +423,21 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
 
   const renderUpdated = (d: MasterDocument) => (
     <Text style={styles.metaText}>
-      {d.updated_by_name ?? d.uploaded_by_name ?? 'Someone'} · {formatShortDate(d.updated_at)}
+      {d.updated_by
+        ? nameWithStatus(d.updated_by_name, d.updated_by, deactivatedIds)
+        : nameWithStatus(d.uploaded_by_name, d.uploaded_by, deactivatedIds)}{' '}
+      · {formatShortDate(d.updated_at)}
     </Text>
   );
 
   const renderActions = (d: MasterDocument) => {
     if (busyId === d.id) return <Text style={styles.metaText}>Saving…</Text>;
     if (d.deleted_at) {
+      // Only staff ever see deleted documents (hidden from client-side
+      // users by the database).
       return (
         <View style={styles.actionRow}>
-          <OutlineButton title="Restore" onPress={() => setDeleted(d, false)} />
+          {canDelete && <OutlineButton title="Restore" onPress={() => setDeleted(d, false)} />}
           <OutlineButton title="History" onPress={() => openHistory(d)} />
         </View>
       );
@@ -395,14 +455,18 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
         </View>
       );
     }
+    const canChange = canChangeMasterDoc(profile, d);
     return (
       <View style={styles.actionRow}>
-        <OutlineButton title="Replace file" onPress={() => handleReplace(d)} />
-        <OutlineButton title="Edit" onPress={() => openEdit(d)} />
+        {canChange && <OutlineButton title="Replace file" onPress={() => handleReplace(d)} />}
+        {canChange && <OutlineButton title="Edit" onPress={() => openEdit(d)} />}
         <OutlineButton title="History" onPress={() => openHistory(d)} />
-        <TouchableOpacity style={styles.deleteLink} onPress={() => setConfirmDeleteId(d.id)}>
-          <Text style={styles.deleteLinkText}>Delete</Text>
-        </TouchableOpacity>
+        {canDelete && (
+          <TouchableOpacity style={styles.deleteLink} onPress={() => setConfirmDeleteId(d.id)}>
+            <Text style={styles.deleteLinkText}>Delete</Text>
+          </TouchableOpacity>
+        )}
+        {!canChange && <Text style={styles.viewOnlyText}>From your firm · view only</Text>}
       </View>
     );
   };
@@ -489,7 +553,10 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
 
       {uploadCard}
 
-      <Text style={styles.cardHeading}>Find documents</Text>
+      <View style={styles.findHeaderRow}>
+        <Text style={[styles.cardHeading, { marginBottom: 0 }]}>Find documents</Text>
+        {canManage && <OutlineButton title="Manage categories" onPress={() => setManagingCategories(true)} />}
+      </View>
       <View style={styles.filterRow}>
         {showOrgColumn && orgFilterOptions.length > 1 && (
           <View style={styles.dropdownWrap}>
@@ -502,21 +569,28 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
         )}
         <View style={styles.dropdownWrap}>
           <Dropdown
-            options={[{ value: ALL, label: 'All categories' }, ...topLevelCategories.map((c) => ({ value: c.id, label: c.name }))]}
+            options={[
+              { value: ALL, label: 'All categories' },
+              ...topLevelCategories.map((c) => ({ value: c.id, label: c.hidden ? `${c.name} (hidden)` : c.name })),
+            ]}
             value={categoryFilter}
             onChange={setCategoryFilter}
           />
         </View>
       </View>
       <View style={styles.filterSearchRow}>
-        <ChipSelect
-          options={[
-            { value: 'active', label: 'Active' },
-            { value: 'deleted', label: 'Deleted' },
-          ]}
-          value={statusFilter}
-          onChange={(v) => setStatusFilter(v as StatusFilter)}
-        />
+        {/* Deleted documents are staff-only (the database doesn't return
+            them to Clients or Client Admins at all). */}
+        {canDelete && (
+          <ChipSelect
+            options={[
+              { value: 'active', label: 'Active' },
+              { value: 'deleted', label: 'Deleted' },
+            ]}
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as StatusFilter)}
+          />
+        )}
         <TextInput
           style={styles.searchInput}
           placeholder="Search by name, organisation, or category..."
@@ -602,27 +676,54 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.versionTitle}>Version {historyDoc.current_version} (current)</Text>
                   <Text style={styles.metaText}>
-                    {displayFileName(historyDoc.file_path)} · added by {historyDoc.file_uploaded_by_name ?? 'someone'}
+                    {displayFileName(historyDoc.file_path)} · added by{' '}
+                    {nameWithStatus(historyDoc.file_uploaded_by_name, historyDoc.file_uploaded_by, deactivatedIds)}
                   </Text>
                 </View>
                 <OutlineButton title={openingPath === historyDoc.file_path ? 'Opening…' : 'Open'} onPress={() => openFile(historyDoc.file_path)} />
               </View>
             )}
+            {historyError && <Text style={styles.modalError}>{historyError}</Text>}
             {historyLoading ? (
               <Text style={styles.metaText}>Loading...</Text>
             ) : (
-              versions.map((v) => (
-                <View key={v.id} style={styles.versionRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.versionTitle}>Version {v.version_number}</Text>
-                    <Text style={styles.metaText}>
-                      {displayFileName(v.file_path)} · added by {v.uploaded_by_name ?? 'someone'} · replaced by{' '}
-                      {v.replaced_by_name ?? 'someone'} on {formatShortDate(v.replaced_at)}
-                    </Text>
+              versions.map((v) => {
+                // The same file can appear more than once (e.g. after an
+                // earlier restore); "Make current" is pointless for a file
+                // that is already the current one.
+                const canRestoreThis =
+                  !!historyDoc && canChangeMasterDoc(profile, historyDoc) && v.file_path !== historyDoc.file_path;
+                return (
+                  <View key={v.id} style={styles.versionRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.versionTitle}>Version {v.version_number}</Text>
+                      <Text style={styles.metaText}>
+                        {displayFileName(v.file_path)} · added by {nameWithStatus(v.uploaded_by_name, v.uploaded_by, deactivatedIds)} ·
+                        replaced by {nameWithStatus(v.replaced_by_name, v.replaced_by, deactivatedIds)} on {formatShortDate(v.replaced_at)}
+                      </Text>
+                      {confirmRestorePath === v.file_path && (
+                        <View style={styles.restoreConfirmRow}>
+                          <Text style={styles.confirmText}>
+                            Make this the current file? The current file is kept as a version.
+                          </Text>
+                          <TouchableOpacity disabled={restoringVersion} onPress={() => restoreVersion(v)}>
+                            <Text style={styles.confirmRestoreYes}>{restoringVersion ? 'Saving…' : 'Yes, make current'}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity disabled={restoringVersion} onPress={() => setConfirmRestorePath(null)}>
+                            <Text style={styles.confirmNo}>Cancel</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.versionActions}>
+                      <OutlineButton title={openingPath === v.file_path ? 'Opening…' : 'Open'} onPress={() => openFile(v.file_path)} />
+                      {canRestoreThis && confirmRestorePath !== v.file_path && (
+                        <OutlineButton title="Make current" onPress={() => setConfirmRestorePath(v.file_path)} />
+                      )}
+                    </View>
                   </View>
-                  <OutlineButton title={openingPath === v.file_path ? 'Opening…' : 'Open'} onPress={() => openFile(v.file_path)} />
-                </View>
-              ))
+                );
+              })
             )}
 
             <Text style={styles.sectionHeading}>Activity</Text>
@@ -631,7 +732,7 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
                 <View key={e.id} style={styles.logRow}>
                   <Text style={styles.logText}>{e.details ?? e.action}</Text>
                   <Text style={styles.metaText}>
-                    {e.actor_name ?? 'Someone'} · {formatShortDate(e.created_at)}
+                    {nameWithStatus(e.actor_name, e.actor_id, deactivatedIds)} · {formatShortDate(e.created_at)}
                   </Text>
                 </View>
               ))}
@@ -685,6 +786,15 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
       </View>
       {editModal}
       {historyModal}
+      {canManage && (
+        <MasterCategoryManager
+          visible={managingCategories}
+          onClose={() => setManagingCategories(false)}
+          profile={profile}
+          categories={categories}
+          onCategoriesChanged={reloadCategories}
+        />
+      )}
     </ScreenContainer>
   );
 }
@@ -799,4 +909,9 @@ const styles = StyleSheet.create({
   versionTitle: { fontSize: 13, fontWeight: '600', color: colors.text },
   logRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
   logText: { fontSize: 12.5, color: colors.text, marginBottom: 2 },
+  viewOnlyText: { fontSize: 11, color: colors.textFaint, fontStyle: 'italic' },
+  findHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  versionActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' },
+  restoreConfirmRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 6 },
+  confirmRestoreYes: { fontSize: 12, fontWeight: '700', color: colors.orange },
 });

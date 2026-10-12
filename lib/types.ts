@@ -15,6 +15,13 @@ export type Profile = {
   // in. Deliberately opt-in per account, not automatic — see the
   // migration's header comment for why.
   firm_wide_staff?: boolean;
+  // Add_user_deactivation.sql. Set when the account has been
+  // deactivated — App.tsx signs such a profile out straight away.
+  deactivated_at?: string | null;
+  // Add_password_change.sql. True for every account created after that
+  // file was run, until the person sets their own password — App.tsx
+  // shows SetPasswordScreen instead of the app while it is true.
+  must_change_password?: boolean;
 };
 
 export type Doc = {
@@ -106,6 +113,13 @@ export type Doc = {
   // feature — the correct default for an ordinary entry-only Rework.
   reupload_requested: boolean;
   reupload_fulfilled: boolean;
+  // Add_staff_book_entry.sql: set when a Manager or Accountant put this
+  // document into book entry (their own upload with the box ticked, or
+  // "Send for book entry" on a stored document). Null for a Client's own
+  // ticked upload and for stored documents.
+  entry_requested_by?: string | null;
+  entry_requested_by_name?: string | null;
+  entry_requested_at?: string | null;
   comment: string | null;
   created_at: string;
 };
@@ -205,7 +219,44 @@ export type Task = {
   // the assignee regardless — and for a direct staff-to-staff task with
   // no client_id at all.
   shared_with_client: boolean;
+  // Set by the daily recurring job once the next copy exists. A recurring
+  // task with this still null is the live end of its series.
+  next_occurrence_generated_at: string | null;
 };
+
+// One line of a task's history (Add_user_deactivation.sql) — written only
+// by the database: reassignments (by hand or automatic), and closing /
+// stopping a task whose creator or assignee was deactivated.
+export type TaskActivity = {
+  id: string;
+  task_id: string;
+  action: 'reassigned' | 'closed' | 'stopped_repeating';
+  details: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  created_at: string;
+};
+
+// What get_deactivation_blockers() returns — everything that has to be
+// sorted out before an account can be deactivated.
+export type DeactivationBlockers = {
+  open_tasks: {
+    id: string;
+    title: string;
+    client_name: string | null;
+    client_org_name: string | null;
+    due_date: string | null;
+    recurring: boolean;
+    status: TaskStatus;
+    reassigned_by: string;
+  }[];
+  client_assignments: { client_name: string | null; client_org_name: string; as: 'Manager' | 'Accountant' }[];
+  org_defaults: { client_org_name: string; as: 'Manager' | 'Accountant' }[];
+  rework_documents: { id: string; name: string }[];
+  only_client_admin: boolean;
+};
+
+export type ReassignOption = { id: string; name: string | null; role: Role };
 
 // A lightweight person reference used to populate the Client role's
 // assignee picker in TasksScreen (a flat choice between their own,
@@ -317,6 +368,8 @@ export type StaffMember = {
   // Migration_phase2_firm_wide_staff.sql. Only meaningful for
   // role in ('manager','accountant').
   firm_wide_staff?: boolean;
+  // Add_user_deactivation.sql. Null/absent = active.
+  deactivated_at?: string | null;
 };
 // ------------------------------------------------------------
 // Master Documents (Add_master_documents.sql)
@@ -324,13 +377,17 @@ export type StaffMember = {
 
 // One firm-wide list. parent_id null = a category; parent_id set = a
 // sub-tag under that category (only two levels). Seeded with a default
-// list (is_default); Managers can add more.
+// list (is_default); Managers and Super Admin can add, rename and hide
+// (Update_master_documents_permissions.sql). Nothing is ever deleted.
 export type MasterCategory = {
   id: string;
   tenant_id: string;
   name: string;
   parent_id: string | null;
   is_default: boolean;
+  // Hidden entries can't be picked for new uploads or edits, but still
+  // label the documents that already use them.
+  hidden: boolean;
   created_by: string | null;
   created_at: string;
 };
@@ -369,6 +426,12 @@ export type MasterDocument = {
   deleted_at: string | null;
   deleted_by: string | null;
   deleted_by_name: string | null;
+  // Fixed at creation by the database (Update_master_documents_permissions.sql):
+  // 'client' = uploaded by a Client/Client Admin, or marked from a Client's
+  // document; 'staff' = everything else. Clients and Client Admins can
+  // change only client-owned documents; staff-owned ones are view-only
+  // for them.
+  owner: 'client' | 'staff';
 };
 
 // A previous file of a Master Document — written only by the DB trigger
@@ -395,7 +458,9 @@ export type MasterDocumentLogAction =
   | 'renamed'
   | 'recategorised'
   | 'deleted'
-  | 'restored';
+  | 'restored'
+  // An older file made current again from History.
+  | 'version_restored';
 
 // Who did what, when — written only by the DB trigger, so every change
 // is logged no matter which screen made it.

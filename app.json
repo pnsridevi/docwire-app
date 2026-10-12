@@ -11,10 +11,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.docwire"
+      "bundleIdentifier": "com.docwire"
     },
     "android": {
-      "package": "com.yourcompany.docwire",
+      "package": "com.docwire",
       "adaptiveIcon": {
         "backgroundColor": "#F8F8F8"
       }

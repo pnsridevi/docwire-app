@@ -8,7 +8,9 @@ import { ChipSelect, StatRow, ScreenContainer } from '../components/UI';
 import { ResponsiveGrid } from '../components/ResponsiveGrid';
 import { DataTable } from '../components/DataTable';
 import { useBreakpoint } from '../components/useBreakpoint';
-import { Profile, Task, TaskPriority, RecurrenceTerm } from '../lib/types';
+import { Profile, Task, TaskPriority, RecurrenceTerm, TaskActivity } from '../lib/types';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
+import { TaskSupervision, loadTaskActivity } from '../components/TaskSupervision';
 
 type TypeFilter = 'all' | 'recurring' | 'onetime';
 
@@ -39,6 +41,9 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Add_user_deactivation.sql: "Name (deactivated)" labels and each task's history.
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
+  const [activityByTask, setActivityByTask] = useState<Record<string, TaskActivity[]>>({});
 
   const todayStr = useMemo(() => {
     const d = new Date();
@@ -58,10 +63,12 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
     setLoadError(null);
     setTasks((data as Task[]) ?? []);
     setLoading(false);
+    setActivityByTask(await loadTaskActivity());
   };
 
   useEffect(() => {
     loadTasks();
+    loadDeactivatedIds().then(setDeactivatedIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -86,7 +93,7 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
   const listHeader = (
     <View style={{ marginBottom: 4 }}>
       <Text style={styles.heading}>Tasks</Text>
-      <Text style={styles.subheading}>Platform-wide, view-only.</Text>
+      <Text style={styles.subheading}>Platform-wide. You can reassign open tasks, and close tasks left behind by someone who was deactivated.</Text>
       {loadError && <Text style={styles.errorBanner}>Error: {loadError}</Text>}
 
       <StatRow
@@ -146,7 +153,8 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
                     <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
                   </View>
                   <Text style={styles.taskMeta}>
-                    {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
+                    {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
+                    {nameWithStatus(item.assignee_name, item.assignee_id, deactivatedIds)}
                     {item.client_org_name ? `  ·  ${item.client_org_name}` : ''}
                     {item.due_date ? `  ·  due ${item.due_date}` : ''}
                   </Text>
@@ -172,6 +180,13 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
                   <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
                     {item.status === 'completed' ? 'Completed' : 'In progress'}
                   </Text>
+                  <TaskSupervision
+                    task={item}
+                    latest={activityByTask[item.id]?.[0]}
+                    canSupervise={true}
+                    deactivatedIds={deactivatedIds}
+                    onChanged={loadTasks}
+                  />
                 </View>
               );
             }}
@@ -213,7 +228,8 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
                 width: 190,
                 render: (item) => (
                   <Text style={styles.taskMeta}>
-                    {item.creator_name ?? 'Someone'} → {item.assignee_name ?? 'Someone'}
+                    {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
+                    {nameWithStatus(item.assignee_name, item.assignee_id, deactivatedIds)}
                   </Text>
                 ),
               },
@@ -275,11 +291,20 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
               {
                 key: 'status',
                 header: 'Status',
-                width: 120,
+                width: 240,
                 render: (item) => (
-                  <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
-                    {item.status === 'completed' ? 'Completed' : 'In progress'}
-                  </Text>
+                  <View>
+                    <Text style={[styles.statusText, item.status === 'completed' && styles.statusDone]}>
+                      {item.status === 'completed' ? 'Completed' : 'In progress'}
+                    </Text>
+                    <TaskSupervision
+                      task={item}
+                      latest={activityByTask[item.id]?.[0]}
+                      canSupervise={true}
+                      deactivatedIds={deactivatedIds}
+                      onChanged={loadTasks}
+                    />
+                  </View>
                 ),
               },
             ]}

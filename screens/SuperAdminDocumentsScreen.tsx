@@ -10,6 +10,7 @@ import { DataTable } from '../components/DataTable';
 import { useBreakpoint } from '../components/useBreakpoint';
 import { getDocumentSignedUrl, displayFileName } from '../lib/storage';
 import { Doc, Profile } from '../lib/types';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 import { useMasterDocMarking } from '../components/MasterDocControls';
 
 type TypeFilter = 'all' | 'entry' | 'filed' | 'rework';
@@ -33,15 +34,15 @@ function clientOrgLabel(d: Doc): string {
   if (!d.client_org_id) return 'Internal';
   return d.client_org_name ?? 'Unknown org';
 }
-function clientIdentityLabel(d: Doc): string {
-  if (!d.client_org_id) return d.shared_with_user_name ? `Direct to ${d.shared_with_user_name}` : 'Direct share';
-  return d.client_id ? d.client_name ?? 'Unnamed' : 'All Clients';
+function clientIdentityLabel(d: Doc, dz: Set<string> = new Set()): string {
+  if (!d.client_org_id) return d.shared_with_user_name ? `Direct to ${nameWithStatus(d.shared_with_user_name, d.shared_with_user_id, dz)}` : 'Direct share';
+  return d.client_id ? nameWithStatus(d.client_name ?? 'Unnamed', d.client_id, dz) : 'All Clients';
 }
 
 // "Bhargavi (Accountant)" — who actually created this row, name + role
 // together, matching the demo's elaborated style.
-function sourceLabel(d: Doc): string {
-  return `${d.uploaded_by_name ?? 'Someone'} (${roleLabel(d.source)})`;
+function sourceLabel(d: Doc, dz: Set<string> = new Set()): string {
+  return `${nameWithStatus(d.uploaded_by_name, d.uploaded_by, dz)} (${roleLabel(d.source)})`;
 }
 
 // Who currently has visibility, spelled out rather than left implicit —
@@ -50,15 +51,15 @@ function sourceLabel(d: Doc): string {
 // documents always route to Manager + Accountant per the document
 // lifecycle (Architecture §6.2-6.3), no toggle involved, so that case is
 // fixed rather than computed from flags.
-function sharedWithLabel(d: Doc): string {
+function sharedWithLabel(d: Doc, dz: Set<string> = new Set()): string {
   if (d.source === 'client') return 'Manager, Accountant';
-  if (d.shared_with_user_id) return d.shared_with_user_name ?? 'One colleague (direct share)';
+  if (d.shared_with_user_id) return (d.shared_with_user_name ? nameWithStatus(d.shared_with_user_name, d.shared_with_user_id, dz) : 'One colleague (direct share)');
   const parts: string[] = [];
   if (d.shared_with_manager) parts.push('Manager');
   if (d.shared_with_accountant) parts.push('Accountant');
   if (d.shared_with_clients) {
     parts.push('Client Admin');
-    parts.push(d.client_id ? d.client_name ?? 'a Client' : 'All Clients');
+    parts.push(d.client_id ? nameWithStatus(d.client_name ?? 'a Client', d.client_id, dz) : 'All Clients');
   }
   return parts.length ? parts.join(', ') : 'Not shared';
 }
@@ -79,6 +80,8 @@ export default function SuperAdminDocumentsScreen({ profile }: { profile: Profil
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  // People who have been deactivated (Add_user_deactivation.sql) — shown as "Name (deactivated)".
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
   // Doc names rendered here were plain Text with no action — the list
   // showed correctly, but nothing was ever wired to actually open a
   // file. Same signed-URL mechanism AccountantHomeScreen.tsx /
@@ -104,6 +107,7 @@ export default function SuperAdminDocumentsScreen({ profile }: { profile: Profil
   };
 
   useEffect(() => {
+    loadDeactivatedIds().then(setDeactivatedIds);
     loadDocs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -192,7 +196,7 @@ export default function SuperAdminDocumentsScreen({ profile }: { profile: Profil
                 {item.file_path && <Text style={styles.currentFileText}>Current file: {displayFileName(item.file_path)}</Text>}
                 {masterDocs.renderControl(item)}
                 <Text style={styles.clientOrgText}>{clientOrgLabel(item)}</Text>
-                <Text style={styles.clientIdentityText}>{clientIdentityLabel(item)}</Text>
+                <Text style={styles.clientIdentityText}>{clientIdentityLabel(item, deactivatedIds)}</Text>
                 <Pill status={item.status} />
               </View>
             )}
@@ -219,11 +223,11 @@ export default function SuperAdminDocumentsScreen({ profile }: { profile: Profil
               { key: 'client', header: 'Client Org', width: 180, render: (item) => (
                 <View>
                   <Text style={styles.clientOrgText}>{clientOrgLabel(item)}</Text>
-                  <Text style={styles.clientIdentityText}>{clientIdentityLabel(item)}</Text>
+                  <Text style={styles.clientIdentityText}>{clientIdentityLabel(item, deactivatedIds)}</Text>
                 </View>
               ) },
-              { key: 'source', header: 'Source', width: 190, render: (item) => <Text style={styles.docMeta}>{sourceLabel(item)}</Text> },
-              { key: 'sharedWith', header: 'Shared with', width: 210, render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item)}</Text> },
+              { key: 'source', header: 'Source', width: 190, render: (item) => <Text style={styles.docMeta}>{sourceLabel(item, deactivatedIds)}</Text> },
+              { key: 'sharedWith', header: 'Shared with', width: 210, render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item, deactivatedIds)}</Text> },
               { key: 'status', header: 'Status', width: 140, render: (item) => <Pill status={item.status} /> },
             ]}
           />

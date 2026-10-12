@@ -74,10 +74,34 @@ export function formatShortDate(iso: string | null): string {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-// Only Managers add categories/sub-tags (confirmed decision; enforced by
-// master_categories_insert_manager in the database too).
+// Managers and Super Admin add, rename and hide categories/sub-tags
+// (Update_master_documents_permissions.sql enforces the same rule).
 export function canAddCategories(profile: Profile): boolean {
-  return profile.role === 'manager';
+  return profile.role === 'manager' || profile.role === 'super_admin';
+}
+
+export function canManageCategories(profile: Profile): boolean {
+  return canAddCategories(profile);
+}
+
+// Client and Client Admin are one side for Master Documents.
+export function isClientSideRole(profile: Profile): boolean {
+  return profile.role === 'client' || profile.role === 'client_admin';
+}
+
+// Replace file, Edit details, and "Make this the current version".
+// Staff and Super Admin: any Master Document they can see. Clients and
+// Client Admins: only client-owned ones — documents added by the firm are
+// view-only for them. Mirrors master_documents_before_write; the database
+// is the real boundary, this only decides which buttons to show.
+export function canChangeMasterDoc(profile: Profile, doc: MasterDocument): boolean {
+  if (doc.deleted_at) return false;
+  return !isClientSideRole(profile) || doc.owner === 'client';
+}
+
+// Delete, restore and the Deleted filter: staff and Super Admin only.
+export function canDeleteMasterDocs(profile: Profile): boolean {
+  return !isClientSideRole(profile);
 }
 
 // Is this regular document already a Master Document? True when a live

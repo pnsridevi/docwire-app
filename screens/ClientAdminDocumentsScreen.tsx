@@ -10,6 +10,7 @@ import { DataTable } from '../components/DataTable';
 import { useBreakpoint } from '../components/useBreakpoint';
 import { getDocumentSignedUrl, displayFileName } from '../lib/storage';
 import { Doc, Profile } from '../lib/types';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 import { useMasterDocMarking } from '../components/MasterDocControls';
 
 type TypeFilter = 'all' | 'entry' | 'filed' | 'rework';
@@ -18,24 +19,24 @@ function roleLabel(source: string): string {
   return source === 'client' ? 'Client' : source === 'manager' ? 'Manager' : 'Accountant';
 }
 
-function clientLabel(d: Doc): string {
-  if (!d.client_org_id) return d.shared_with_user_name ? `Direct to ${d.shared_with_user_name}` : 'Internal';
-  return d.client_id ? d.client_name ?? 'Unnamed' : `All Clients · ${d.client_org_name ?? 'org'}`;
+function clientLabel(d: Doc, dz: Set<string> = new Set()): string {
+  if (!d.client_org_id) return d.shared_with_user_name ? `Direct to ${nameWithStatus(d.shared_with_user_name, d.shared_with_user_id, dz)}` : 'Internal';
+  return d.client_id ? nameWithStatus(d.client_name ?? 'Unnamed', d.client_id, dz) : `All Clients · ${d.client_org_name ?? 'org'}`;
 }
 
-function sourceLabel(d: Doc): string {
-  return `${d.uploaded_by_name ?? 'Someone'} (${roleLabel(d.source)})`;
+function sourceLabel(d: Doc, dz: Set<string> = new Set()): string {
+  return `${nameWithStatus(d.uploaded_by_name, d.uploaded_by, dz)} (${roleLabel(d.source)})`;
 }
 
-function sharedWithLabel(d: Doc): string {
+function sharedWithLabel(d: Doc, dz: Set<string> = new Set()): string {
   if (d.source === 'client') return 'Manager, Accountant';
-  if (d.shared_with_user_id) return d.shared_with_user_name ?? 'One colleague (direct share)';
+  if (d.shared_with_user_id) return (d.shared_with_user_name ? nameWithStatus(d.shared_with_user_name, d.shared_with_user_id, dz) : 'One colleague (direct share)');
   const parts: string[] = [];
   if (d.shared_with_manager) parts.push('Manager');
   if (d.shared_with_accountant) parts.push('Accountant');
   if (d.shared_with_clients) {
     parts.push('Client Admin');
-    parts.push(d.client_id ? d.client_name ?? 'a Client' : 'All Clients');
+    parts.push(d.client_id ? nameWithStatus(d.client_name ?? 'a Client', d.client_id, dz) : 'All Clients');
   }
   return parts.length ? parts.join(', ') : 'Not shared';
 }
@@ -57,6 +58,8 @@ export default function ClientAdminDocumentsScreen({ profile }: { profile: Profi
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  // People who have been deactivated (Add_user_deactivation.sql) — shown as "Name (deactivated)".
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
   // Doc names rendered in this screen were plain Text with no action —
   // the list showed correctly, but nothing was ever wired to actually
   // open a file. Same signed-URL mechanism AccountantHomeScreen.tsx /
@@ -82,6 +85,7 @@ export default function ClientAdminDocumentsScreen({ profile }: { profile: Profi
   };
 
   useEffect(() => {
+    loadDeactivatedIds().then(setDeactivatedIds);
     loadDocs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -169,7 +173,7 @@ export default function ClientAdminDocumentsScreen({ profile }: { profile: Profi
                 </TouchableOpacity>
                 {item.file_path && <Text style={styles.currentFileText}>Current file: {displayFileName(item.file_path)}</Text>}
                 {masterDocs.renderControl(item)}
-                <Text style={styles.docMeta}>{clientLabel(item)}</Text>
+                <Text style={styles.docMeta}>{clientLabel(item, deactivatedIds)}</Text>
                 <Pill status={item.status} />
               </View>
             )}
@@ -193,9 +197,9 @@ export default function ClientAdminDocumentsScreen({ profile }: { profile: Profi
                   {masterDocs.renderControl(item)}
                 </View>
               ) },
-              { key: 'client', header: 'Client', width: 180, render: (item) => <Text style={styles.docMeta}>{clientLabel(item)}</Text> },
-              { key: 'source', header: 'Source', width: 190, render: (item) => <Text style={styles.docMeta}>{sourceLabel(item)}</Text> },
-              { key: 'sharedWith', header: 'Shared with', width: 210, render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item)}</Text> },
+              { key: 'client', header: 'Client', width: 180, render: (item) => <Text style={styles.docMeta}>{clientLabel(item, deactivatedIds)}</Text> },
+              { key: 'source', header: 'Source', width: 190, render: (item) => <Text style={styles.docMeta}>{sourceLabel(item, deactivatedIds)}</Text> },
+              { key: 'sharedWith', header: 'Shared with', width: 210, render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item, deactivatedIds)}</Text> },
               { key: 'status', header: 'Status', width: 140, render: (item) => <Pill status={item.status} /> },
             ]}
           />

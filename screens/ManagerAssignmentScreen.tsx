@@ -64,12 +64,14 @@ export default function ManagerAssignmentScreen({ profile }: { profile: Profile 
     const orgIds = Array.from(new Set(assignmentRows.map((r: any) => r.client_org_id))) as string[];
     const managerIds = Array.from(new Set(assignmentRows.map((r: any) => r.manager_id))) as string[];
     const [{ data: clients }, { data: orgs }, { data: managers }] = await Promise.all([
-      supabase.from('users').select('id,name').in('id', clientIds),
+      supabase.from('users').select('id,name,deactivated_at').in('id', clientIds),
       supabase.from('client_organizations').select('id,name').in('id', orgIds),
       supabase.from('users').select('id,name').in('id', managerIds),
     ]);
     const clientNameById: Record<string, string | null> = {};
-    (clients ?? []).forEach((c: any) => (clientNameById[c.id] = c.name));
+    // A deactivated Client keeps their assignment row (Add_user_deactivation.sql),
+    // so they still appear here — labelled, so it's clear why.
+    (clients ?? []).forEach((c: any) => (clientNameById[c.id] = c.deactivated_at ? `${c.name ?? 'Unnamed'} (deactivated)` : c.name));
     const orgNameById: Record<string, string | null> = {};
     (orgs ?? []).forEach((o: any) => (orgNameById[o.id] = o.name));
     const managerNameById: Record<string, string | null> = {};

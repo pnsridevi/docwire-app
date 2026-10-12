@@ -1,11 +1,12 @@
 // LOCATION: docwire-app/screens/ClientAdminUsersScreen.tsx (NEW FILE)
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Switch, TouchableOpacity, StyleSheet } from 'react-native';
 import { supabase, extractFunctionError } from '../lib/supabase';
 import { colors } from '../theme/colors';
 import { PrimaryButton, OutlineButton, Pill, StatRow, ScreenContainer } from '../components/UI';
 import { DataTable } from '../components/DataTable';
 import { ClientOrg, Profile, StaffMember } from '../lib/types';
+import { DeactivateUserPanel, DeactivateTarget } from '../components/DeactivateUserPanel';
 
 // Client Admin's Users tab (Roles doc: "Manage the org's users within
 // the seat cap Super Admin set (add, invite)"). Scoped to the caller's
@@ -51,6 +52,13 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
   const [createError, setCreateError] = useState<string | null>(null);
   const [lastCreated, setLastCreated] = useState<{ email: string; password: string } | null>(null);
 
+  // Deactivate / reactivate Clients (Add_user_deactivation.sql). A Client
+  // Admin can manage Clients of their own organisation only — not
+  // themselves or other Client Admins (that's Super Admin's job).
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [panelTarget, setPanelTarget] = useState<DeactivateTarget | null>(null);
+  const [panelMode, setPanelMode] = useState<'deactivate' | 'reactivate'>('deactivate');
+
   const load = async () => {
     if (!profile.client_org_id) {
       setLoadError('Your account has no client organization set.');
@@ -60,7 +68,7 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
     setLoading(true);
     const [{ data: orgData, error: orgError }, { data: usersData, error: usersError }, { data: assignments, error: assignError }] = await Promise.all([
       supabase.from('client_organizations').select('*').eq('id', profile.client_org_id).single(),
-      supabase.from('users').select('id,name,email,role,client_org_id,created_at').eq('client_org_id', profile.client_org_id),
+      supabase.from('users').select('id,name,email,role,client_org_id,created_at,deactivated_at').eq('client_org_id', profile.client_org_id),
       supabase.from('client_assignments').select('client_id,manager_id,accountant_id').eq('client_org_id', profile.client_org_id),
     ]);
     const err = orgError ?? usersError ?? assignError;
@@ -117,7 +125,11 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
     return m;
   }, [clientTeams]);
 
-  const seatsUsed = orgUsers.length;
+  // Deactivated users don't hold a seat (the database and the
+  // admin-create-user Edge Function count the same way).
+  const activeUsers = orgUsers.filter((u) => !u.deactivated_at);
+  const seatsUsed = activeUsers.length;
+  const visibleUsers = showDeactivated ? orgUsers : activeUsers;
   const seatLimit = org?.seat_limit ?? 0;
   const atCap = seatsUsed >= seatLimit;
 
@@ -160,7 +172,7 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
         <StatRow
           items={[
             { num: `${seatsUsed} of ${seatLimit}`, label: 'Seats Used', icon: 'users' },
-            { num: String(orgUsers.filter((u) => u.role === 'client').length), label: 'Clients', icon: 'briefcase' },
+            { num: String(activeUsers.filter((u) => u.role === 'client').length), label: 'Clients', icon: 'briefcase' },
             { num: String(seatLimit - seatsUsed > 0 ? seatLimit - seatsUsed : 0), label: 'Seats Remaining', icon: 'user-plus' },
           ]}
         />
@@ -206,12 +218,32 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
             repeating the same Clients above it. Non-Client rows (e.g.
             Client Admin) show a dash for both — they genuinely have no
             Manager/Accountant, not a data gap. */}
+        <View style={styles.toggleRow}>
+          <Switch
+            value={showDeactivated}
+            onValueChange={setShowDeactivated}
+            trackColor={{ false: colors.border, true: colors.tint }}
+            thumbColor={showDeactivated ? colors.orange : '#fff'}
+          />
+          <Text style={styles.cellSub}>Show deactivated users</Text>
+        </View>
+
         <DataTable
           scrollable={false}
-          data={loading ? [] : orgUsers}
+          data={loading ? [] : visibleUsers}
           keyExtractor={(u) => u.id}
           columns={[
-            { key: 'name', header: 'Name', width: 160, render: (u) => <Text style={styles.cellPrimary}>{u.name ?? 'Unnamed'}</Text> },
+            {
+              key: 'name',
+              header: 'Name',
+              width: 160,
+              render: (u) => (
+                <View>
+                  <Text style={[styles.cellPrimary, !!u.deactivated_at && styles.deactivatedName]}>{u.name ?? 'Unnamed'}</Text>
+                  {!!u.deactivated_at && <Text style={styles.deactivatedTag}>Deactivated</Text>}
+                </View>
+              ),
+            },
             { key: 'email', header: 'Email', width: 200, render: (u) => <Text style={styles.cellSub}>{u.email ?? '—'}</Text> },
             { key: 'role', header: 'Role', width: 110, render: (u) => <Text style={styles.cellSub}>{roleLabel(u.role)}</Text> },
             {
@@ -226,10 +258,48 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
               width: 160,
               render: (u) => <Text style={styles.cellSub}>{u.role === 'client' ? teamByClientId[u.id]?.accountantName ?? 'Unnamed' : '—'}</Text>,
             },
+            {
+              key: 'status',
+              header: '',
+              width: 130,
+              render: (u) => {
+                if (u.role !== 'client' || u.id === profile.id) return null;
+                const target = { id: u.id, name: u.name, role: u.role };
+                return u.deactivated_at ? (
+                  <OutlineButton
+                    title="Reactivate"
+                    onPress={() => {
+                      setPanelMode('reactivate');
+                      setPanelTarget(target);
+                    }}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.deactivateLink}
+                    onPress={() => {
+                      setPanelMode('deactivate');
+                      setPanelTarget(target);
+                    }}
+                  >
+                    <Text style={styles.deactivateLinkText}>Deactivate</Text>
+                  </TouchableOpacity>
+                );
+              },
+            },
           ]}
           ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Loading...' : 'No users yet.'}</Text>}
         />
       </View>
+      <DeactivateUserPanel
+        profile={profile}
+        target={panelTarget}
+        mode={panelMode}
+        onClose={() => setPanelTarget(null)}
+        onDone={async () => {
+          setPanelTarget(null);
+          await load();
+        }}
+      />
     </ScreenContainer>
   );
 }
@@ -269,4 +339,9 @@ const styles = StyleSheet.create({
   cellPrimary: { fontSize: 14, fontWeight: '600', color: colors.text },
   cellSub: { fontSize: 12, color: colors.textFaint },
   empty: { color: colors.textFaint, marginTop: 20, textAlign: 'center' },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 4 },
+  deactivatedName: { color: colors.textFaint },
+  deactivatedTag: { fontSize: 10.5, fontWeight: '700', color: colors.danger, marginTop: 1 },
+  deactivateLink: { paddingVertical: 8, paddingHorizontal: 4 },
+  deactivateLinkText: { fontSize: 12, fontWeight: '600', color: colors.danger },
 });

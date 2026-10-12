@@ -22,6 +22,8 @@ import ClientAdminUsersScreen from './screens/ClientAdminUsersScreen';
 import ClientAdminDocumentsScreen from './screens/ClientAdminDocumentsScreen';
 import ClientAdminTasksScreen from './screens/ClientAdminTasksScreen';
 import MasterDocsScreen from './screens/MasterDocsScreen';
+import SetPasswordScreen from './screens/SetPasswordScreen';
+import { ChangePasswordModal } from './components/ChangePasswordForm';
 
 const TABS_BY_ROLE: Record<string, NavTab[]> = {
   // 'Master Docs' (Add_master_documents.sql) — every role gets it, placed
@@ -70,6 +72,13 @@ function AppContent() {
   // child has been picked — see navTypes.ts.
   const [activeTab, setActiveTab] = useState('Documents');
   const isWide = useIsWide();
+  // Shown on the login screen after a deactivated account is signed out
+  // (Add_user_deactivation.sql).
+  const [signedOutNotice, setSignedOutNotice] = useState<string | null>(null);
+  const DEACTIVATED_NOTICE = 'This account has been deactivated. Contact your administrator if you think this is a mistake.';
+  // "Change password" dialog, opened from the Topbar's avatar menu
+  // (Add_password_change.sql).
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   // No-op on native; on web this injects the font-family/height CSS reset
   // once (see webGlobalStyles.ts) — belongs here rather than per-screen
@@ -87,6 +96,16 @@ function AppContent() {
       return;
     }
     const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
+    // A deactivated person can still read their own row — exactly so this
+    // check can sign them out with a clear message instead of showing
+    // empty screens (the database refuses them everything else).
+    if ((data as Profile | null)?.deactivated_at) {
+      setSignedOutNotice(DEACTIVATED_NOTICE);
+      setProfile(null);
+      setLoading(false);
+      await supabase.auth.signOut();
+      return;
+    }
     setProfile(data as Profile);
     setLoading(false);
   };
@@ -108,23 +127,19 @@ function AppContent() {
     let cancelled = false;
     const resolveOrgLabel = async () => {
       if (!profile) {
-        console.log('[orgLabel] no profile yet — setting null');
         setOrgLabel(null);
         return;
       }
       if (FIRM_STAFF_ROLES.has(profile.role)) {
         const { data, error } = await supabase.from('tenants').select('firm_name').eq('id', profile.tenant_id).single();
-        console.log('[orgLabel] firm-staff branch — tenant_id:', profile.tenant_id, 'data:', data, 'error:', error);
         if (!cancelled) setOrgLabel(error ? null : (data?.firm_name ?? null));
         return;
       }
       if (!profile.client_org_id) {
-        console.log('[orgLabel] client-side role but no client_org_id — setting null');
         if (!cancelled) setOrgLabel(null);
         return;
       }
       const { data, error } = await supabase.from('client_organizations').select('name').eq('id', profile.client_org_id).single();
-      console.log('[orgLabel] client-org branch — client_org_id:', profile.client_org_id, 'data:', data, 'error:', error);
       if (!cancelled) setOrgLabel(error ? null : (data?.name ?? null));
     };
     resolveOrgLabel();
@@ -139,6 +154,26 @@ function AppContent() {
   useEffect(() => {
     setActiveTab('Documents');
   }, [profile?.role]);
+
+  // Someone deactivated while already signed in: re-check on every tab
+  // switch, so they're signed out with the message at their next tap
+  // rather than whenever their session next refreshes.
+  useEffect(() => {
+    if (!profile) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('users').select('deactivated_at').eq('id', profile.id).maybeSingle();
+      if (!cancelled && data?.deactivated_at) {
+        setSignedOutNotice(DEACTIVATED_NOTICE);
+        setProfile(null);
+        await supabase.auth.signOut();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   if (supabaseConfigError) {
     return (
@@ -160,7 +195,18 @@ function AppContent() {
   if (!profile) {
     return (
       <SafeAreaView style={{ flex: 1 }}>
-        <LoginScreen />
+        <LoginScreen notice={signedOutNotice} onLoginAttempt={() => setSignedOutNotice(null)} />
+      </SafeAreaView>
+    );
+  }
+
+  // New account still on its temporary password: nothing else opens until
+  // they set their own (Add_password_change.sql). The database clears the
+  // flag once the password really changes; loadProfile then lets them in.
+  if (profile.must_change_password) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <SetPasswordScreen name={profile.name} onDone={loadProfile} onLogout={() => supabase.auth.signOut()} />
       </SafeAreaView>
     );
   }
@@ -224,6 +270,10 @@ function AppContent() {
   };
 
   const handleLogout = () => supabase.auth.signOut();
+  const openChangePassword = () => setChangePasswordOpen(true);
+  const changePasswordModal = (
+    <ChangePasswordModal visible={changePasswordOpen} onClose={() => setChangePasswordOpen(false)} />
+  );
 
   // Desktop/web: Topbar spans the full width on top (brand + avatar), then
   // sidebar + content fill the row below it. Matches the demo's
@@ -231,11 +281,18 @@ function AppContent() {
   if (isWide && tabs) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-        <Topbar name={profile.name} role={profile.role} orgLabel={orgLabel} onLogout={handleLogout} />
+        <Topbar
+          name={profile.name}
+          role={profile.role}
+          orgLabel={orgLabel}
+          onLogout={handleLogout}
+          onChangePassword={openChangePassword}
+        />
         <View style={{ flex: 1, flexDirection: 'row' }}>
           <SideNav tabs={tabs} active={activeTab} onChange={setActiveTab} />
           <View style={{ flex: 1 }}>{renderContent()}</View>
         </View>
+        {changePasswordModal}
       </SafeAreaView>
     );
   }
@@ -245,9 +302,16 @@ function AppContent() {
   // desktop layout above — only the nav chrome below it differs.
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Topbar name={profile.name} role={profile.role} orgLabel={orgLabel} onLogout={handleLogout} />
+      <Topbar
+        name={profile.name}
+        role={profile.role}
+        orgLabel={orgLabel}
+        onLogout={handleLogout}
+        onChangePassword={openChangePassword}
+      />
       <View style={{ flex: 1 }}>{renderContent()}</View>
       {bottomTabLabels && <BottomTabBar tabs={bottomTabLabels} active={activeParent} onChange={setActiveTab} />}
+      {changePasswordModal}
     </SafeAreaView>
   );
 }

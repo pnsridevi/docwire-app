@@ -10,6 +10,7 @@ import { ResponsiveGrid } from '../components/ResponsiveGrid';
 import { DataTable } from '../components/DataTable';
 import { useBreakpoint } from '../components/useBreakpoint';
 import { Profile, Doc } from '../lib/types';
+import { loadDeactivatedIds, nameWithStatus } from '../lib/users';
 import { useMasterDocMarking } from '../components/MasterDocControls';
 
 type TypeFilter = 'all' | 'entry' | 'filed' | 'rework';
@@ -18,22 +19,22 @@ function roleLabel(source: string): string {
   return source === 'client' ? 'Client' : source === 'manager' ? 'Manager' : 'Accountant';
 }
 
-function clientLabel(d: Doc): string {
-  return d.client_id ? d.client_name ?? 'Unnamed' : `All Clients · ${d.client_org_name ?? 'org'}`;
+function clientLabel(d: Doc, dz: Set<string> = new Set()): string {
+  return d.client_id ? nameWithStatus(d.client_name ?? 'Unnamed', d.client_id, dz) : `All Clients · ${d.client_org_name ?? 'org'}`;
 }
 
-function sourceLabel(d: Doc): string {
-  return `${d.uploaded_by_name ?? 'Someone'} (${roleLabel(d.source)})`;
+function sourceLabel(d: Doc, dz: Set<string> = new Set()): string {
+  return `${nameWithStatus(d.uploaded_by_name, d.uploaded_by, dz)} (${roleLabel(d.source)})`;
 }
 
-function sharedWithLabel(d: Doc): string {
+function sharedWithLabel(d: Doc, dz: Set<string> = new Set()): string {
   if (d.source === 'client') return 'Manager, Accountant';
   const parts: string[] = [];
   if (d.shared_with_manager) parts.push('Manager');
   if (d.shared_with_accountant) parts.push('Accountant');
   if (d.shared_with_clients) {
     parts.push('Client Admin');
-    parts.push(d.client_id ? d.client_name ?? 'a Client' : 'All Clients');
+    parts.push(d.client_id ? nameWithStatus(d.client_name ?? 'a Client', d.client_id, dz) : 'All Clients');
   }
   return parts.length ? parts.join(', ') : 'Not shared';
 }
@@ -58,6 +59,8 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
   // `data` and ignore `error`. This surfaces the real reason on screen
   // instead of guessing from an empty list.
   const [loadError, setLoadError] = useState<string | null>(null);
+  // People who have been deactivated (Add_user_deactivation.sql) — shown as "Name (deactivated)".
+  const [deactivatedIds, setDeactivatedIds] = useState<Set<string>>(new Set());
   // Who this Client's Manager/Accountant are (Architecture §8's mapping,
   // relevant to Client per Roles doc — Client should be able to tell who
   // handles their account). Phase 2 item D.1: this now reads
@@ -144,6 +147,7 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
   };
 
   useEffect(() => {
+    loadDeactivatedIds().then(setDeactivatedIds);
     loadOrgName();
     loadTeam();
     loadDocs();
@@ -526,19 +530,19 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
                 key: 'client',
                 header: 'Client',
                 width: 180,
-                render: (item) => <Text style={styles.docMeta}>{clientLabel(item)}</Text>,
+                render: (item) => <Text style={styles.docMeta}>{clientLabel(item, deactivatedIds)}</Text>,
               },
               {
                 key: 'source',
                 header: 'Source',
                 width: 190,
-                render: (item) => <Text style={styles.docMeta}>{sourceLabel(item)}</Text>,
+                render: (item) => <Text style={styles.docMeta}>{sourceLabel(item, deactivatedIds)}</Text>,
               },
               {
                 key: 'sharedWith',
                 header: 'Shared with',
                 width: 210,
-                render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item)}</Text>,
+                render: (item) => <Text style={styles.docMeta}>{sharedWithLabel(item, deactivatedIds)}</Text>,
               },
               { key: 'status', header: 'Status', width: 140, render: (item) => <Pill status={item.status} /> },
             ]}

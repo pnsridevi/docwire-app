@@ -1,12 +1,13 @@
 // LOCATION: docwire-app/screens/SuperAdminUsersScreen.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, Switch, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Switch, TouchableOpacity, StyleSheet } from 'react-native';
 import { supabase, extractFunctionError } from '../lib/supabase';
 import { colors } from '../theme/colors';
 import { PrimaryButton, OutlineButton, ChipSelect, StatRow, ScreenContainer } from '../components/UI';
 import { Dropdown } from '../components/Dropdown';
 import { DataTable } from '../components/DataTable';
 import { ClientAssignment, ClientOrg, Profile, Role, StaffMember } from '../lib/types';
+import { DeactivateUserPanel, DeactivateTarget } from '../components/DeactivateUserPanel';
 
 type SubTab = 'overview' | 'add';
 
@@ -26,6 +27,8 @@ type ClientTableRow = {
   clientId: string | null; // only set for real Clients — needed to edit/save
   managerId: string | null;
   accountantId: string | null;
+  userId: string; // the Client's or Client Admin's own user id (Deactivate/Reactivate)
+  deactivated: boolean;
 };
 
 // Super Admin's Users tab. Two states: overview (default — every client
@@ -49,7 +52,7 @@ export default function SuperAdminUsersScreen({
   const [managerDefaults, setManagerDefaults] = useState<{ client_org_id: string; manager_id: string }[]>([]);
   const [accountantDefaults, setAccountantDefaults] = useState<{ client_org_id: string; accountant_id: string }[]>([]);
   const [assignments, setAssignments] = useState<ClientAssignment[]>([]);
-  const [clientUsers, setClientUsers] = useState<{ id: string; name: string | null }[]>([]);
+  const [clientUsers, setClientUsers] = useState<{ id: string; name: string | null; deactivated_at: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -84,6 +87,12 @@ export default function SuperAdminUsersScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // --- Deactivate / reactivate (Add_user_deactivation.sql) ---
+  // Deactivated people are hidden unless this is switched on.
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [panelTarget, setPanelTarget] = useState<DeactivateTarget | null>(null);
+  const [panelMode, setPanelMode] = useState<'deactivate' | 'reactivate'>('deactivate');
+
   const load = async () => {
     setLoading(true);
     const [
@@ -97,13 +106,13 @@ export default function SuperAdminUsersScreen({
       supabase.from('client_organizations').select('*').eq('tenant_id', profile.tenant_id).order('created_at', { ascending: false }),
       supabase
         .from('users')
-        .select('id,name,email,role,client_org_id,created_at,firm_wide_staff')
+        .select('id,name,email,role,client_org_id,created_at,firm_wide_staff,deactivated_at')
         .eq('tenant_id', profile.tenant_id)
         .in('role', ['manager', 'accountant', 'client_admin']),
       supabase.from('manager_assignments').select('client_org_id,manager_id'),
       supabase.from('accountant_assignments').select('client_org_id,accountant_id'),
       supabase.from('client_assignments').select('client_id,client_org_id,manager_id,accountant_id'),
-      supabase.from('users').select('id,name').eq('tenant_id', profile.tenant_id).eq('role', 'client'),
+      supabase.from('users').select('id,name,deactivated_at').eq('tenant_id', profile.tenant_id).eq('role', 'client'),
     ]);
     const err = orgsError ?? staffError ?? mgrError ?? accError ?? assignError ?? clientUsersError;
     if (err) {
@@ -284,6 +293,18 @@ export default function SuperAdminUsersScreen({
   const managers = staff.filter((s) => s.role === 'manager');
   const accountants = staff.filter((s) => s.role === 'accountant');
   const clientAdmins = staff.filter((s) => s.role === 'client_admin');
+  // Only active people can be picked as a Manager/Accountant (the database
+  // refuses a deactivated one too).
+  const activeManagers = managers.filter((m) => !m.deactivated_at);
+  const activeAccountants = accountants.filter((a) => !a.deactivated_at);
+  const deactivatedClientIds = new Set(clientUsers.filter((c) => !!c.deactivated_at).map((c) => c.id));
+  const withStatus = (name: string | null, deactivated: boolean) =>
+    `${name ?? 'Unnamed'}${deactivated ? ' (deactivated)' : ''}`;
+
+  const openPanel = (target: DeactivateTarget, mode: 'deactivate' | 'reactivate') => {
+    setPanelMode(mode);
+    setPanelTarget(target);
+  };
 
   const orgNameById: Record<string, string> = {};
   clientOrgs.forEach((o) => (orgNameById[o.id] = o.name));
@@ -292,7 +313,7 @@ export default function SuperAdminUsersScreen({
   clientUsers.forEach((c) => (clientNameById[c.id] = c.name ?? 'Unnamed'));
 
   const staffNameById: Record<string, string> = {};
-  [...managers, ...accountants].forEach((s) => (staffNameById[s.id] = s.name ?? 'Unnamed'));
+  [...managers, ...accountants].forEach((s) => (staffNameById[s.id] = withStatus(s.name, !!s.deactivated_at)));
 
   const defaultManagerByOrg: Record<string, string> = {};
   managerDefaults.forEach((a) => (defaultManagerByOrg[a.client_org_id] = a.manager_id));
@@ -304,11 +325,11 @@ export default function SuperAdminUsersScreen({
   const managerWorkload = (managerId: string) => assignments.filter((a) => a.manager_id === managerId);
   const clientAdminsByOrg = (orgId: string) => clientAdmins.filter((c) => c.client_org_id === orgId);
 
-  const managerOptions = managers.map((m) => {
+  const managerOptions = activeManagers.map((m) => {
     const count = managerWorkload(m.id).length;
     return { value: m.id, label: `${m.name ?? 'Unnamed'} (${count})` };
   });
-  const accountantOptions = accountants.map((a) => {
+  const accountantOptions = activeAccountants.map((a) => {
     const count = accountantWorkload(a.id).length;
     return { value: a.id, label: `${a.name ?? 'Unnamed'} (${count})` };
   });
@@ -325,6 +346,8 @@ export default function SuperAdminUsersScreen({
       clientId: a.client_id,
       managerId: a.manager_id,
       accountantId: a.accountant_id,
+      userId: a.client_id,
+      deactivated: deactivatedClientIds.has(a.client_id),
     })),
     ...clientAdmins.map((c) => ({
       key: `admin:${c.id}`,
@@ -334,10 +357,16 @@ export default function SuperAdminUsersScreen({
       clientId: null,
       managerId: null,
       accountantId: null,
+      userId: c.id,
+      deactivated: !!c.deactivated_at,
     })),
-  ].sort((x, y) => (x.orgName ?? '').localeCompare(y.orgName ?? '') || (x.name ?? '').localeCompare(y.name ?? ''));
+  ]
+    .filter((r) => showDeactivated || !r.deactivated)
+    .sort((x, y) => (x.orgName ?? '').localeCompare(y.orgName ?? '') || (x.name ?? '').localeCompare(y.name ?? ''));
 
-  const allStaff = [...managers, ...accountants].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  const allStaff = [...managers, ...accountants]
+    .filter((s) => showDeactivated || !s.deactivated_at)
+    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
 
   const initials = (name: string | null) => {
     if (!name || !name.trim()) return '?';
@@ -381,12 +410,22 @@ export default function SuperAdminUsersScreen({
             <StatRow
               items={[
                 { num: String(clientOrgs.length), label: 'Client Orgs', icon: 'briefcase' },
-                { num: String(assignments.length), label: 'Clients', icon: 'users' },
-                { num: String(managers.length), label: 'Managers', icon: 'users' },
-                { num: String(accountants.length), label: 'Accountants', icon: 'user-plus' },
-                { num: String(clientAdmins.length), label: 'Client Admins', icon: 'user-plus' },
+                { num: String(assignments.filter((a) => !deactivatedClientIds.has(a.client_id)).length), label: 'Clients', icon: 'users' },
+                { num: String(activeManagers.length), label: 'Managers', icon: 'users' },
+                { num: String(activeAccountants.length), label: 'Accountants', icon: 'user-plus' },
+                { num: String(clientAdmins.filter((c) => !c.deactivated_at).length), label: 'Client Admins', icon: 'user-plus' },
               ]}
             />
+
+            <View style={styles.toggleRow}>
+              <Switch
+                value={showDeactivated}
+                onValueChange={setShowDeactivated}
+                trackColor={{ false: colors.border, true: colors.tint }}
+                thumbColor={showDeactivated ? colors.orange : '#fff'}
+              />
+              <Text style={styles.cellSub}>Show deactivated users</Text>
+            </View>
 
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Client Organizations</Text>
@@ -404,7 +443,12 @@ export default function SuperAdminUsersScreen({
                     <View>
                       <Text style={styles.cellPrimary}>{o.name}</Text>
                       <Text style={styles.cellSub}>
-                        {clientAdminsByOrg(o.id).length > 0 ? clientAdminsByOrg(o.id).map((a) => a.name ?? 'Unnamed').join(', ') : 'No admin yet'}
+                        {clientAdminsByOrg(o.id).filter((a) => !a.deactivated_at).length > 0
+                          ? clientAdminsByOrg(o.id)
+                              .filter((a) => !a.deactivated_at)
+                              .map((a) => a.name ?? 'Unnamed')
+                              .join(', ')
+                          : 'No active admin'}
                       </Text>
                     </View>
                   ),
@@ -457,8 +501,9 @@ export default function SuperAdminUsersScreen({
                   width: 190,
                   render: (r) => (
                     <View>
-                      <Text style={styles.cellPrimary}>{r.name ?? 'Unnamed'}</Text>
+                      <Text style={[styles.cellPrimary, r.deactivated && styles.deactivatedName]}>{r.name ?? 'Unnamed'}</Text>
                       {r.roleTag === 'Client Admin' && <Text style={styles.cellSub}>Client Admin</Text>}
+                      {r.deactivated && <Text style={styles.deactivatedTag}>Deactivated</Text>}
                     </View>
                   ),
                 },
@@ -496,10 +541,9 @@ export default function SuperAdminUsersScreen({
                 {
                   key: 'actions',
                   header: '',
-                  width: 150,
+                  width: 230,
                   render: (r) => {
-                    if (!r.clientId) return null;
-                    if (editingClientId === r.clientId) {
+                    if (r.clientId && editingClientId === r.clientId) {
                       return (
                         <View style={styles.actionRow}>
                           <OutlineButton title={saving ? 'Saving...' : 'Save'} onPress={() => saveEdit(r.clientId!)} />
@@ -507,7 +551,21 @@ export default function SuperAdminUsersScreen({
                         </View>
                       );
                     }
-                    return <OutlineButton title="Edit" onPress={() => startEdit(r)} />;
+                    const target = { id: r.userId, name: r.name, role: r.roleTag === 'Client' ? 'client' : 'client_admin' };
+                    return (
+                      <View style={styles.actionRow}>
+                        {/* A deactivated Client keeps their assignment row, and it can still be edited — e.g. when
+                            the Manager or Accountant it points at is leaving. */}
+                        {r.clientId && <OutlineButton title="Edit" onPress={() => startEdit(r)} />}
+                        {r.deactivated ? (
+                          <OutlineButton title="Reactivate" onPress={() => openPanel(target, 'reactivate')} />
+                        ) : (
+                          <TouchableOpacity style={styles.deactivateLink} onPress={() => openPanel(target, 'deactivate')}>
+                            <Text style={styles.deactivateLinkText}>Deactivate</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
                   },
                 },
               ]}
@@ -530,7 +588,10 @@ export default function SuperAdminUsersScreen({
                   render: (s) => (
                     <View style={styles.nameCell}>
                       <Avatar name={s.name} />
-                      <Text style={styles.cellPrimary}>{s.name ?? 'Unnamed'}</Text>
+                      <View>
+                        <Text style={[styles.cellPrimary, !!s.deactivated_at && styles.deactivatedName]}>{s.name ?? 'Unnamed'}</Text>
+                        {!!s.deactivated_at && <Text style={styles.deactivatedTag}>Deactivated</Text>}
+                      </View>
                     </View>
                   ),
                 },
@@ -554,6 +615,19 @@ export default function SuperAdminUsersScreen({
                       thumbColor={s.firm_wide_staff ? colors.orange : '#fff'}
                     />
                   ),
+                },
+                {
+                  key: 'status',
+                  header: '',
+                  width: 130,
+                  render: (s) =>
+                    s.deactivated_at ? (
+                      <OutlineButton title="Reactivate" onPress={() => openPanel({ id: s.id, name: s.name, role: s.role }, 'reactivate')} />
+                    ) : (
+                      <TouchableOpacity style={styles.deactivateLink} onPress={() => openPanel({ id: s.id, name: s.name, role: s.role }, 'deactivate')}>
+                        <Text style={styles.deactivateLinkText}>Deactivate</Text>
+                      </TouchableOpacity>
+                    ),
                 },
               ]}
               ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Loading...' : 'No staff created yet.'}</Text>}
@@ -607,6 +681,16 @@ export default function SuperAdminUsersScreen({
           </>
         )}
       </View>
+      <DeactivateUserPanel
+        profile={profile}
+        target={panelTarget}
+        mode={panelMode}
+        onClose={() => setPanelTarget(null)}
+        onDone={async () => {
+          setPanelTarget(null);
+          await load();
+        }}
+      />
     </ScreenContainer>
   );
 }
@@ -693,5 +777,10 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 10.5, fontWeight: '700', color: colors.orangeDeep },
   cellPrimary: { fontSize: 14, fontWeight: '600', color: colors.text },
   cellSub: { fontSize: 12, color: colors.textFaint },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  deactivatedName: { color: colors.textFaint },
+  deactivatedTag: { fontSize: 10.5, fontWeight: '700', color: colors.danger, marginTop: 1 },
+  deactivateLink: { paddingVertical: 8, paddingHorizontal: 4 },
+  deactivateLinkText: { fontSize: 12, fontWeight: '600', color: colors.danger },
   empty: { color: colors.textFaint, marginTop: 12, marginBottom: 12, textAlign: 'center' },
 });

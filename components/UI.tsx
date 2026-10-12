@@ -201,10 +201,28 @@ function roleLabel(role: Role): string {
 // button — tapping the chip itself no longer logs anyone out. This also
 // gives mobile a real logout path independent of SideNav's "Log out" item
 // (which only renders on wide/tablet+desktop layouts).
-export function Topbar({ name, role, orgLabel, onLogout }: { name: string | null; role: Role; orgLabel?: string | null; onLogout: () => void }) {
+//
+// Phones (not isWide): the role label next to the avatar is hidden and the
+// firm/org name shrinks with "…", so the bar never runs off the right edge
+// (it used to cut "Manager" to "Mar"). Name and role are still in the menu.
+// The menu also holds "Change password" (App.tsx owns the dialog).
+export function Topbar({
+  name,
+  role,
+  orgLabel,
+  onLogout,
+  onChangePassword,
+}: {
+  name: string | null;
+  role: Role;
+  orgLabel?: string | null;
+  onLogout: () => void;
+  onChangePassword?: () => void;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const isWide = useIsWide();
   return (
-    <View style={styles.topbar}>
+    <View style={[styles.topbar, !isWide && styles.topbarNarrow]}>
       <View style={styles.topbarBrand}>
         <View style={styles.brandMarkSmall}>
           <Text style={styles.brandMarkTextSmall}>DW</Text>
@@ -221,14 +239,26 @@ export function Topbar({ name, role, orgLabel, onLogout }: { name: string | null
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(name)}</Text>
         </View>
-        <Text style={styles.roleChipText}>{roleLabel(role)}</Text>
+        {isWide && <Text style={styles.roleChipText}>{roleLabel(role)}</Text>}
       </TouchableOpacity>
 
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={() => setMenuOpen(false)}>
-          <View style={styles.menuCard}>
+          <View style={[styles.menuCard, !isWide && styles.menuCardNarrow]}>
             <Text style={styles.menuName}>{name ?? 'Unnamed'}</Text>
             <Text style={styles.menuRole}>{roleLabel(role)}</Text>
+            {onChangePassword && (
+              <TouchableOpacity
+                style={styles.menuItemBtn}
+                onPress={() => {
+                  setMenuOpen(false);
+                  onChangePassword();
+                }}
+              >
+                <Feather name="key" size={14} color={colors.text} />
+                <Text style={styles.menuItemText}>Change password</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.menuLogoutBtn}
               onPress={() => {
@@ -408,13 +438,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  topbarBrand: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  topbarNarrow: { paddingHorizontal: 16 },
+  // flexShrink + minWidth 0 let the brand row give up space to the avatar
+  // instead of pushing it off screen; only the org label actually shrinks.
+  topbarBrand: { flexDirection: 'row', alignItems: 'center', gap: 9, flexShrink: 1, minWidth: 0, marginRight: 12 },
   topbarBrandText: { fontSize: 17, fontWeight: '700', color: colors.text },
   topbarOrgDivider: { fontSize: 16, color: colors.border, marginHorizontal: -2 },
   // Bold, but visually secondary to the DocWire wordmark itself (slightly
   // smaller, uses the theme's accent color instead of primary text) —
   // this is the firm/org identity, not the product's own brand.
-  topbarOrgLabel: { fontSize: 15, fontWeight: '700', color: colors.orangeDeep, maxWidth: 260 },
+  topbarOrgLabel: { fontSize: 15, fontWeight: '700', color: colors.orangeDeep, maxWidth: 260, flexShrink: 1 },
   brandMarkSmall: { width: 28, height: 28, borderRadius: 7, backgroundColor: colors.orange, alignItems: 'center', justifyContent: 'center' },
   brandMarkTextSmall: { color: '#fff', fontWeight: '700', fontSize: 12 },
   avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.orangeDeep, alignItems: 'center', justifyContent: 'center' },
@@ -439,6 +472,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
+  menuCardNarrow: { marginRight: 12 },
   menuName: { fontSize: 14, fontWeight: '700', color: colors.text },
   menuRole: { fontSize: 12, color: colors.textFaint, marginTop: 2, marginBottom: 10 },
   menuLogoutBtn: {
@@ -450,6 +484,15 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   menuLogoutText: { color: colors.danger, fontWeight: '600', fontSize: 13 },
+  menuItemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  menuItemText: { color: colors.text, fontWeight: '600', fontSize: 13 },
   // BottomTabBar — mobile fixed bottom row
   bottomBar: {
     flexDirection: 'row',
