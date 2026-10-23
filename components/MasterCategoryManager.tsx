@@ -9,7 +9,13 @@ import { MasterCategory, Profile } from '../lib/types';
 // "Manage categories" panel on the Master Docs screen — Managers and Super
 // Admin only (Update_master_documents_permissions.sql enforces the same).
 //
-// Add, rename and hide categories and sub-tags, defaults included. There
+// Two kinds of entry (Shared_master_categories.sql):
+//   Standard (tenant_id null) — one list shared by every firm. Read-only
+//     here: no Rename or Hide. A firm can still add its own sub-tags under
+//     a standard category.
+//   The firm's own (tenant_id set) — add, rename and hide as before.
+//
+// Add, rename and hide the firm's own categories and sub-tags. There
 // is no delete: a hidden entry disappears from the pickers but still
 // labels every document already using it, and can be shown again at any
 // time. Old History entries keep the name they had when they were written.
@@ -128,7 +134,9 @@ export function MasterCategoryManager({
     onClose();
   };
 
-  const renderEntry = (c: MasterCategory, isSub: boolean) => (
+  const renderEntry = (c: MasterCategory, isSub: boolean) => {
+    const isStandard = c.tenant_id === null;
+    return (
     <View key={c.id} style={[styles.entryRow, isSub && styles.subRow]}>
       {renamingId === c.id ? (
         <View style={styles.renameWrap}>
@@ -144,16 +152,20 @@ export function MasterCategoryManager({
         <>
           <View style={styles.nameWrap}>
             <Text style={[isSub ? styles.subName : styles.catName, c.hidden && styles.hiddenName]}>{c.name}</Text>
-            {c.is_default && <Text style={styles.badge}>Default</Text>}
+            {isStandard && <Text style={styles.badge}>Standard</Text>}
             {c.hidden && <Text style={[styles.badge, styles.badgeHidden]}>Hidden</Text>}
           </View>
           <View style={styles.linkRow}>
-            <TouchableOpacity disabled={busy} onPress={() => startRename(c)}>
-              <Text style={styles.link}>Rename</Text>
-            </TouchableOpacity>
-            <TouchableOpacity disabled={busy} onPress={() => toggleHidden(c)}>
-              <Text style={styles.link}>{c.hidden ? 'Show again' : 'Hide'}</Text>
-            </TouchableOpacity>
+            {!isStandard && (
+              <TouchableOpacity disabled={busy} onPress={() => startRename(c)}>
+                <Text style={styles.link}>Rename</Text>
+              </TouchableOpacity>
+            )}
+            {!isStandard && (
+              <TouchableOpacity disabled={busy} onPress={() => toggleHidden(c)}>
+                <Text style={styles.link}>{c.hidden ? 'Show again' : 'Hide'}</Text>
+              </TouchableOpacity>
+            )}
             {!isSub && (
               <TouchableOpacity
                 disabled={busy}
@@ -170,7 +182,8 @@ export function MasterCategoryManager({
         </>
       )}
     </View>
-  );
+    );
+  };
 
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={close}>
@@ -180,9 +193,10 @@ export function MasterCategoryManager({
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={styles.title}>Manage categories</Text>
             <Text style={styles.subtitle}>
-              One list for the whole firm. Hiding removes an entry from the pickers (hiding a category also hides its
-              sub-tags from the pickers), but documents already using it keep it. Nothing is deleted, and a hidden
-              entry can be shown again at any time.
+              Standard categories are the same for every firm and can't be renamed or hidden. Categories and sub-tags
+              your firm adds are visible only to your firm. Hiding removes one of your own entries from the pickers
+              (hiding a category also hides its sub-tags), but documents already using it keep it. Nothing is deleted,
+              and a hidden entry can be shown again at any time.
             </Text>
 
             <View style={styles.addRow}>

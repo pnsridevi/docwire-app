@@ -375,13 +375,15 @@ export type StaffMember = {
 // Master Documents (Add_master_documents.sql)
 // ------------------------------------------------------------
 
-// One firm-wide list. parent_id null = a category; parent_id set = a
-// sub-tag under that category (only two levels). Seeded with a default
-// list (is_default); Managers and Super Admin can add, rename and hide
-// (Update_master_documents_permissions.sql). Nothing is ever deleted.
+// parent_id null = a category; parent_id set = a sub-tag under that
+// category (only two levels). Nothing is ever deleted.
+// Shared_master_categories.sql: tenant_id null = the STANDARD list, one
+// copy shared by every firm — read-only in the app (no rename, no hide).
+// tenant_id set = that firm's own entry, visible only to that firm;
+// Managers and Super Admin add, rename and hide those.
 export type MasterCategory = {
   id: string;
-  tenant_id: string;
+  tenant_id: string | null;
   name: string;
   parent_id: string | null;
   is_default: boolean;
