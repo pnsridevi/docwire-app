@@ -288,14 +288,18 @@ export function Topbar({
 //   - Mobile (narrow): BottomTabBar, a fixed row at the bottom.
 // App.tsx picks which one to render; the actual screens never know or care
 // which nav rendered them — same content, same logic, chrome only differs.
+// `badges` (optional): unread count per tab label (Chat), shown as a small
+// orange bubble on the icon.
 export function BottomTabBar({
   tabs,
   active,
   onChange,
+  badges,
 }: {
   tabs: string[];
   active: string;
   onChange: (tab: string) => void;
+  badges?: Record<string, number>;
 }) {
   return (
     <View style={styles.bottomBar}>
@@ -303,7 +307,14 @@ export function BottomTabBar({
         const isActive = tab === active;
         return (
           <TouchableOpacity key={tab} style={styles.bottomItem} onPress={() => onChange(tab)}>
-            <Feather name={tabIcon(tab)} size={18} color={isActive ? colors.orange : colors.textFaint} />
+            <View>
+              <Feather name={tabIcon(tab)} size={18} color={isActive ? colors.orange : colors.textFaint} />
+              {!!badges?.[tab] && (
+                <View style={styles.bottomBadge}>
+                  <Text style={styles.bottomBadgeText}>{badges[tab] > 99 ? '99+' : badges[tab]}</Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.bottomItemText, isActive && styles.bottomItemTextActive]}>{tab}</Text>
             {isActive && <View style={styles.bottomItemDot} />}
           </TouchableOpacity>
@@ -505,6 +516,19 @@ const styles = StyleSheet.create({
   bottomItemText: { fontSize: 12, fontWeight: '600', color: colors.textFaint },
   bottomItemTextActive: { color: colors.orange },
   bottomItemDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.orange },
+  bottomBadge: {
+    position: 'absolute',
+    top: -6,
+    left: 11,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: colors.orange,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomBadgeText: { color: '#fff', fontSize: 9.5, fontWeight: '700' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
   chip: {
     borderWidth: 1,

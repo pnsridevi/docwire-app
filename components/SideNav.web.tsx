@@ -65,14 +65,35 @@ function itemStyle(isActive: boolean, nested?: boolean): React.CSSProperties {
   };
 }
 
+// `badges` (optional): a number shown on the right of a top-level item,
+// keyed by tab label — today only Chat's unread total. 0 or missing shows
+// nothing.
+const badgeStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  minWidth: 20,
+  height: 20,
+  borderRadius: 10,
+  padding: '0 6px',
+  boxSizing: 'border-box',
+  background: colors.sidebarTextActive,
+  color: '#fff',
+  fontSize: 11,
+  fontWeight: 700,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
 export function SideNav({
   tabs,
   active,
   onChange,
+  badges,
 }: {
   tabs: NavTab[];
   active: string;
   onChange: (tab: string) => void;
+  badges?: Record<string, number>;
 }) {
   ensureHoverStyle();
   const { parent: activeParent, child: activeChild } = splitActiveTab(active);
@@ -103,6 +124,7 @@ export function SideNav({
               >
                 <Feather name={tabIcon(tab.label)} size={16} color={isActive ? colors.sidebarTextActive : colors.sidebarText} />
                 <span>{tab.label}</span>
+                {!!badges?.[tab.label] && <span style={badgeStyle}>{badges[tab.label] > 99 ? '99+' : badges[tab.label]}</span>}
               </div>
             );
           }

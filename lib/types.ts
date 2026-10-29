@@ -475,3 +475,66 @@ export type MasterDocumentLogEntry = {
   actor_name: string | null;
   created_at: string;
 };
+// ------------------------------------------------------------
+// Chat (Add_chat.sql)
+// ------------------------------------------------------------
+
+// One row of my_chats(): a chat the signed-in person is in, with what
+// the chat list shows.
+export type ChatSummary = {
+  chat_id: string;
+  is_group: boolean;
+  // Group name; for an unnamed group the other members' names; for a 1:1
+  // chat the other person's name.
+  display_name: string;
+  group_name: string | null;
+  // For a group: the person who manages it (adds, removes, renames).
+  created_by: string;
+  client_org_id: string | null;
+  member_count: number;
+  // 1:1 chats only.
+  other_user_id: string | null;
+  other_user_role: Role | null;
+  other_deactivated: boolean;
+  last_activity_at: string;
+  last_kind: 'text' | 'system' | null;
+  last_body: string | null;
+  last_sender_id: string | null;
+  last_sender_name: string | null;
+  last_deleted: boolean | null;
+  unread_count: number;
+};
+
+export type ChatMessage = {
+  id: string;
+  chat_id: string;
+  sender_id: string | null;
+  // Kept on the message so it still shows after the sender leaves.
+  sender_name: string | null;
+  // 'system' = "Priya added Kavya" etc.
+  kind: 'text' | 'system';
+  // Null once deleted.
+  body: string | null;
+  created_at: string;
+  updated_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+};
+
+export type ChatMember = {
+  user_id: string;
+  name: string | null;
+  role: Role;
+  client_org_name: string | null;
+  deactivated: boolean;
+  joined_at: string;
+};
+
+// Someone the signed-in person may start a chat with (chat_people()).
+export type ChatPerson = {
+  user_id: string;
+  name: string | null;
+  role: Role;
+  client_org_id: string | null;
+  client_org_name: string | null;
+};

@@ -17,6 +17,8 @@ const TAB_ICONS: Record<string, FeatherIconName> = {
   // Master Documents — 'archive' reads as "permanent records", distinct
   // from Documents' day-to-day 'file-text'.
   'Master Docs': 'archive',
+  // Chat (Add_chat.sql).
+  Chat: 'message-circle',
   // Nested child under 'Users' (see SideNav.tsx) — its own icon so a
   // single-item nested list doesn't just read as unlabeled indented text.
   Add: 'plus-circle',

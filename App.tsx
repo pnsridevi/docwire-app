@@ -22,20 +22,25 @@ import ClientAdminUsersScreen from './screens/ClientAdminUsersScreen';
 import ClientAdminDocumentsScreen from './screens/ClientAdminDocumentsScreen';
 import ClientAdminTasksScreen from './screens/ClientAdminTasksScreen';
 import MasterDocsScreen from './screens/MasterDocsScreen';
+import ChatScreen from './screens/ChatScreen';
 import SetPasswordScreen from './screens/SetPasswordScreen';
 import { ChangePasswordModal } from './components/ChangePasswordForm';
+import { useChatUnreadTotal } from './lib/chatLive';
 
 const TABS_BY_ROLE: Record<string, NavTab[]> = {
   // 'Master Docs' (Add_master_documents.sql) — every role gets it, placed
   // right after Tasks. Short label on purpose: Manager/Accountant's mobile
   // BottomTabBar now holds four items, and "Master Documents" doesn't fit
   // a quarter of a phone's width.
-  client: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }],
+  //
+  // 'Chat' (Add_chat.sql) — every role, last. Staff phones now show five
+  // bottom-bar items.
+  client: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Chat' }],
   // Accountant's own symmetric Team tab (ManagerAssignmentScreen.tsx) —
   // added this session alongside Manager's, same read-only shape, other
   // column (Client | Organisation | Manager instead of Accountant).
-  accountant: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Team' }],
-  manager: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Team' }],
+  accountant: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Team' }, { label: 'Chat' }],
+  manager: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Team' }, { label: 'Chat' }],
   // Read-only Documents/Tasks views (their own screens, not the
   // Client/Manager/Accountant ones — different scope and no actions) plus
   // a single Users tab. Originally had three nested subtabs (Client Orgs
@@ -48,8 +53,9 @@ const TABS_BY_ROLE: Record<string, NavTab[]> = {
     { label: 'Tasks' },
     { label: 'Master Docs' },
     { label: 'Users', children: ['Add'] },
+    { label: 'Chat' },
   ],
-  client_admin: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Users' }],
+  client_admin: [{ label: 'Documents' }, { label: 'Tasks' }, { label: 'Master Docs' }, { label: 'Users' }, { label: 'Chat' }],
 };
 
 // Roles whose identity is the FIRM itself (tenants.firm_name) rather than
@@ -79,6 +85,10 @@ function AppContent() {
   // "Change password" dialog, opened from the Topbar's avatar menu
   // (Add_password_change.sql).
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  // Unread chat messages, for the badge on the Chat tab. Checked every 15
+  // seconds while another tab is open; on the Chat tab, ChatScreen reports
+  // it straight away instead (it already has the numbers).
+  const [chatUnread, setChatUnread] = useChatUnreadTotal(!!profile && !profile.must_change_password && activeTab !== 'Chat');
 
   // No-op on native; on web this injects the font-family/height CSS reset
   // once (see webGlobalStyles.ts) — belongs here rather than per-screen
@@ -228,6 +238,9 @@ function AppContent() {
     // Same screen for every role — what each person sees is decided by the
     // database (can_access_master_org), not by separate per-role screens.
     if (activeParent === 'Master Docs') return <MasterDocsScreen profile={profile} />;
+    // Same for every role too — who can chat with whom is decided by the
+    // database (Add_chat.sql).
+    if (activeParent === 'Chat') return <ChatScreen profile={profile} onUnreadTotalChange={setChatUnread} />;
     if (profile.role === 'client') {
       return activeParent === 'Tasks' ? <TasksScreen profile={profile} /> : <ClientHomeScreen profile={profile} />;
     }
@@ -269,6 +282,8 @@ function AppContent() {
     );
   };
 
+  const navBadges = { Chat: chatUnread };
+
   const handleLogout = () => supabase.auth.signOut();
   const openChangePassword = () => setChangePasswordOpen(true);
   const changePasswordModal = (
@@ -289,7 +304,7 @@ function AppContent() {
           onChangePassword={openChangePassword}
         />
         <View style={{ flex: 1, flexDirection: 'row' }}>
-          <SideNav tabs={tabs} active={activeTab} onChange={setActiveTab} />
+          <SideNav tabs={tabs} active={activeTab} onChange={setActiveTab} badges={navBadges} />
           <View style={{ flex: 1 }}>{renderContent()}</View>
         </View>
         {changePasswordModal}
@@ -310,7 +325,9 @@ function AppContent() {
         onChangePassword={openChangePassword}
       />
       <View style={{ flex: 1 }}>{renderContent()}</View>
-      {bottomTabLabels && <BottomTabBar tabs={bottomTabLabels} active={activeParent} onChange={setActiveTab} />}
+      {bottomTabLabels && (
+        <BottomTabBar tabs={bottomTabLabels} active={activeParent} onChange={setActiveTab} badges={navBadges} />
+      )}
       {changePasswordModal}
     </SafeAreaView>
   );

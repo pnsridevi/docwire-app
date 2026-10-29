@@ -20,14 +20,19 @@ import { NavTab, makeActiveTab, splitActiveTab } from './navTypes';
 // plain label for a childless tab ('Documents') or a composite
 // 'Parent::Child' key for a selected child ('Users::Assignments') — see
 // navTypes.ts.
+// `badges` (optional): a number shown on the right of a top-level item,
+// keyed by tab label — today only Chat's unread total. 0 or missing shows
+// nothing.
 export function SideNav({
   tabs,
   active,
   onChange,
+  badges,
 }: {
   tabs: NavTab[];
   active: string;
   onChange: (tab: string) => void;
+  badges?: Record<string, number>;
 }) {
   const { parent: activeParent, child: activeChild } = splitActiveTab(active);
 
@@ -46,6 +51,11 @@ export function SideNav({
               >
                 <Feather name={tabIcon(tab.label)} size={16} color={isActive ? colors.sidebarTextActive : colors.sidebarText} />
                 <Text style={[styles.sideItemText, isActive && styles.sideItemTextActive]}>{tab.label}</Text>
+                {!!badges?.[tab.label] && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{badges[tab.label] > 99 ? '99+' : badges[tab.label]}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             );
           }
@@ -132,4 +142,16 @@ const styles = StyleSheet.create({
   sideItemNested: { paddingLeft: 46, paddingVertical: 7 },
   sideItemNestedText: { fontSize: 12.5, fontWeight: '500', color: colors.sidebarText },
   sideSession: { marginTop: 18 },
+  // Unread count, pushed to the right edge of the item.
+  badge: {
+    marginLeft: 'auto',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    backgroundColor: colors.sidebarTextActive,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 });
