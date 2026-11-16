@@ -52,7 +52,7 @@ export default function SuperAdminUsersScreen({
   const [managerDefaults, setManagerDefaults] = useState<{ client_org_id: string; manager_id: string }[]>([]);
   const [accountantDefaults, setAccountantDefaults] = useState<{ client_org_id: string; accountant_id: string }[]>([]);
   const [assignments, setAssignments] = useState<ClientAssignment[]>([]);
-  const [clientUsers, setClientUsers] = useState<{ id: string; name: string | null; deactivated_at: string | null }[]>([]);
+  const [clientUsers, setClientUsers] = useState<{ id: string; name: string | null; client_org_id: string | null; deactivated_at: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -73,10 +73,17 @@ export default function SuperAdminUsersScreen({
   const [creatingAdmin, setCreatingAdmin] = useState(false);
   const [adminCreateError, setAdminCreateError] = useState<string | null>(null);
 
-  // --- Add view: Manager/Accountant ---
+  // --- Add view: Manager/Accountant/Super Admin ---
   const [staffName, setStaffName] = useState('');
   const [staffEmail, setStaffEmail] = useState('');
-  const [staffRole, setStaffRole] = useState<'manager' | 'accountant'>('accountant');
+  const [staffRole, setStaffRole] = useState<'manager' | 'accountant' | 'super_admin'>('accountant');
+
+  // --- Overview: seat limit edit (Fix admins and seats.sql). Only active
+  // Clients use seats; Client Admins don't. ---
+  const [editingSeatsOrgId, setEditingSeatsOrgId] = useState<string | null>(null);
+  const [draftSeats, setDraftSeats] = useState('');
+  const [savingSeats, setSavingSeats] = useState(false);
+  const [seatsError, setSeatsError] = useState<string | null>(null);
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -108,11 +115,11 @@ export default function SuperAdminUsersScreen({
         .from('users')
         .select('id,name,email,role,client_org_id,created_at,firm_wide_staff,deactivated_at')
         .eq('tenant_id', profile.tenant_id)
-        .in('role', ['manager', 'accountant', 'client_admin']),
+        .in('role', ['super_admin', 'manager', 'accountant', 'client_admin']),
       supabase.from('manager_assignments').select('client_org_id,manager_id'),
       supabase.from('accountant_assignments').select('client_org_id,accountant_id'),
       supabase.from('client_assignments').select('client_id,client_org_id,manager_id,accountant_id'),
-      supabase.from('users').select('id,name,deactivated_at').eq('tenant_id', profile.tenant_id).eq('role', 'client'),
+      supabase.from('users').select('id,name,client_org_id,deactivated_at').eq('tenant_id', profile.tenant_id).eq('role', 'client'),
     ]);
     const err = orgsError ?? staffError ?? mgrError ?? accError ?? assignError ?? clientUsersError;
     if (err) {
@@ -213,6 +220,32 @@ export default function SuperAdminUsersScreen({
     setCreatingStaff(false);
   };
 
+  const startSeatsEdit = (o: ClientOrg) => {
+    setEditingSeatsOrgId(o.id);
+    setDraftSeats(String(o.seat_limit));
+    setSeatsError(null);
+  };
+
+  const saveSeats = async (orgId: string) => {
+    if (savingSeats) return;
+    const next = parseInt(draftSeats, 10);
+    if (!Number.isFinite(next) || next < 1) {
+      setSeatsError('Seat limit must be 1 or more.');
+      return;
+    }
+    setSavingSeats(true);
+    setSeatsError(null);
+    const { error } = await supabase.from('client_organizations').update({ seat_limit: next }).eq('id', orgId);
+    setSavingSeats(false);
+    if (error) {
+      console.error('[SuperAdminUsersScreen] saveSeats failed:', error);
+      setSeatsError(error.message);
+      return;
+    }
+    setEditingSeatsOrgId(null);
+    await load();
+  };
+
   const toggleFirmWide = async (userId: string, next: boolean) => {
     setStaff((prev) => prev.map((s) => (s.id === userId ? { ...s, firm_wide_staff: next } : s)));
     const { error } = await supabase.from('users').update({ firm_wide_staff: next }).eq('id', userId);
@@ -293,6 +326,12 @@ export default function SuperAdminUsersScreen({
   const managers = staff.filter((s) => s.role === 'manager');
   const accountants = staff.filter((s) => s.role === 'accountant');
   const clientAdmins = staff.filter((s) => s.role === 'client_admin');
+  const superAdmins = staff
+    .filter((s) => s.role === 'super_admin')
+    .filter((s) => showDeactivated || !s.deactivated_at)
+    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  // Seats: only active Clients count (Client Admins never do).
+  const activeClientsInOrg = (orgId: string) => clientUsers.filter((c) => c.client_org_id === orgId && !c.deactivated_at).length;
   // Only active people can be picked as a Manager/Accountant (the database
   // refuses a deactivated one too).
   const activeManagers = managers.filter((m) => !m.deactivated_at);
@@ -414,6 +453,7 @@ export default function SuperAdminUsersScreen({
                 { num: String(activeManagers.length), label: 'Managers', icon: 'users' },
                 { num: String(activeAccountants.length), label: 'Accountants', icon: 'user-plus' },
                 { num: String(clientAdmins.filter((c) => !c.deactivated_at).length), label: 'Client Admins', icon: 'user-plus' },
+                { num: String(staff.filter((s) => s.role === 'super_admin' && !s.deactivated_at).length), label: 'Super Admins', icon: 'user-plus' },
               ]}
             />
 
@@ -429,7 +469,8 @@ export default function SuperAdminUsersScreen({
 
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Client Organizations</Text>
-              <Text style={styles.sectionSubtitle}>Default Manager/Accountant for new Clients in each org.</Text>
+              <Text style={styles.sectionSubtitle}>Default Manager/Accountant for new Clients in each org, and its Client seats (Client Admins don't use a seat).</Text>
+              {seatsError && <Text style={styles.errorBanner}>Error: {seatsError}</Text>}
               <DataTable
               scrollable={false}
               data={loading ? [] : clientOrgs}
@@ -452,6 +493,49 @@ export default function SuperAdminUsersScreen({
                       </Text>
                     </View>
                   ),
+                },
+                {
+                  key: 'seats',
+                  header: 'Client seats',
+                  width: 190,
+                  render: (o) => {
+                    const used = activeClientsInOrg(o.id);
+                    if (editingSeatsOrgId === o.id) {
+                      const draft = parseInt(draftSeats, 10);
+                      return (
+                        <View>
+                          <TextInput
+                            style={[styles.input, styles.seatInput]}
+                            value={draftSeats}
+                            onChangeText={setDraftSeats}
+                            keyboardType="number-pad"
+                            placeholder="Seats"
+                            placeholderTextColor={colors.textFaint}
+                          />
+                          {Number.isFinite(draft) && draft >= 1 && draft < used && (
+                            <Text style={styles.warningText}>
+                              {used} Clients are active. Nobody is switched off, but no Client can be added or reactivated until fewer than {draft} are active.
+                            </Text>
+                          )}
+                          <View style={styles.actionRow}>
+                            <OutlineButton title={savingSeats ? 'Saving...' : 'Save'} onPress={() => saveSeats(o.id)} />
+                            <OutlineButton title="Cancel" onPress={() => setEditingSeatsOrgId(null)} />
+                          </View>
+                        </View>
+                      );
+                    }
+                    return (
+                      <View style={styles.nameCell}>
+                        <View>
+                          <Text style={styles.cellSub}>{used} of {o.seat_limit} used</Text>
+                          {used > o.seat_limit && <Text style={styles.warningText}>Over the limit</Text>}
+                        </View>
+                        <TouchableOpacity onPress={() => startSeatsEdit(o)}>
+                          <Text style={styles.editLinkText}>Edit</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  },
                 },
                 {
                   key: 'manager',
@@ -574,6 +658,50 @@ export default function SuperAdminUsersScreen({
             </View>
 
             <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Super Admins</Text>
+              <Text style={styles.sectionSubtitle}>Everyone here has the same powers. There is always at least one active Super Admin.</Text>
+              <DataTable
+              scrollable={false}
+              data={loading ? [] : superAdmins}
+              keyExtractor={(s) => s.id}
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  width: 220,
+                  render: (s) => (
+                    <View style={styles.nameCell}>
+                      <Avatar name={s.name} />
+                      <View>
+                        <Text style={[styles.cellPrimary, !!s.deactivated_at && styles.deactivatedName]}>
+                          {s.name ?? 'Unnamed'}
+                          {s.id === profile.id ? ' (you)' : ''}
+                        </Text>
+                        {!!s.deactivated_at && <Text style={styles.deactivatedTag}>Deactivated</Text>}
+                      </View>
+                    </View>
+                  ),
+                },
+                { key: 'email', header: 'Email', width: 220, render: (s) => <Text style={styles.cellSub}>{s.email ?? '—'}</Text> },
+                {
+                  key: 'status',
+                  header: '',
+                  width: 130,
+                  render: (s) =>
+                    s.id === profile.id ? null : s.deactivated_at ? (
+                      <OutlineButton title="Reactivate" onPress={() => openPanel({ id: s.id, name: s.name, role: s.role }, 'reactivate')} />
+                    ) : (
+                      <TouchableOpacity style={styles.deactivateLink} onPress={() => openPanel({ id: s.id, name: s.name, role: s.role }, 'deactivate')}>
+                        <Text style={styles.deactivateLinkText}>Deactivate</Text>
+                      </TouchableOpacity>
+                    ),
+                },
+              ]}
+              ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Loading...' : 'No Super Admins to show.'}</Text>}
+              />
+            </View>
+
+            <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Staff</Text>
               <Text style={styles.sectionSubtitle}>Managers and Accountants.</Text>
               <DataTable
@@ -662,7 +790,7 @@ export default function SuperAdminUsersScreen({
             </View>
 
             <View style={styles.panel}>
-              <Text style={styles.panelTitle}>Manager / Accountant</Text>
+              <Text style={styles.panelTitle}>Manager / Accountant / Super Admin</Text>
               {createError && <Text style={styles.errorText}>{createError}</Text>}
               <TextInput style={styles.input} placeholder="Full name" placeholderTextColor={colors.textFaint} value={staffName} onChangeText={setStaffName} />
               <TextInput style={styles.input} placeholder="Email" placeholderTextColor={colors.textFaint} autoCapitalize="none" value={staffEmail} onChangeText={setStaffEmail} />
@@ -670,10 +798,16 @@ export default function SuperAdminUsersScreen({
                 options={[
                   { value: 'manager', label: 'Manager' },
                   { value: 'accountant', label: 'Accountant' },
+                  { value: 'super_admin', label: 'Super Admin' },
                 ]}
                 value={staffRole}
-                onChange={(v) => setStaffRole(v as 'manager' | 'accountant')}
+                onChange={(v) => setStaffRole(v as 'manager' | 'accountant' | 'super_admin')}
               />
+              {staffRole === 'super_admin' && (
+                <Text style={styles.cellSub}>
+                  A Super Admin has the same powers as you, including adding and deactivating other Super Admins.
+                </Text>
+              )}
               <View style={{ marginTop: 10 }}>
                 <PrimaryButton title={creatingStaff ? 'Creating...' : 'Create staff member'} onPress={createStaff} disabled={creatingStaff || !staffName.trim() || !staffEmail.trim()} />
               </View>
@@ -782,5 +916,7 @@ const styles = StyleSheet.create({
   deactivatedTag: { fontSize: 10.5, fontWeight: '700', color: colors.danger, marginTop: 1 },
   deactivateLink: { paddingVertical: 8, paddingHorizontal: 4 },
   deactivateLinkText: { fontSize: 12, fontWeight: '600', color: colors.danger },
+  editLinkText: { fontSize: 12, fontWeight: '700', color: colors.orange },
+  seatInput: { maxWidth: 90, marginBottom: 6, paddingVertical: 6 },
   empty: { color: colors.textFaint, marginTop: 12, marginBottom: 12, textAlign: 'center' },
 });

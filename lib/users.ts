@@ -35,7 +35,8 @@ export function hasBlockers(b: DeactivationBlockers): boolean {
     b.open_tasks.length > 0 ||
     b.client_assignments.length > 0 ||
     b.org_defaults.length > 0 ||
-    b.rework_documents.length > 0
+    b.rework_documents.length > 0 ||
+    !!b.client_admin_needed
   );
 }
 

@@ -82,7 +82,9 @@ Deno.serve(async (req) => {
       .eq('id', userId)
       .single();
     if (beforeError || !before) {
-      return jsonResponse({ error: 'Could not find that user.' }, 404);
+      // Same reply as the database gives for "not yours to manage", so the
+      // answer never shows whether an id belongs to someone (P-10).
+      return jsonResponse({ error: "You can't manage this person's account." }, 400);
     }
 
     // Step 1 — all the rules.

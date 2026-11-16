@@ -253,6 +253,11 @@ export type DeactivationBlockers = {
   client_assignments: { client_name: string | null; client_org_name: string; as: 'Manager' | 'Accountant' }[];
   org_defaults: { client_org_name: string; as: 'Manager' | 'Accountant' }[];
   rework_documents: { id: string; name: string }[];
+  // Fix admins and seats.sql: the last active Client Admin of an
+  // organisation that still has active Clients can't be deactivated.
+  client_admin_needed?: boolean;
+  // Warning only: the last Client Admin of an organisation with no
+  // active Clients left.
   only_client_admin: boolean;
 };
 

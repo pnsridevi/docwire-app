@@ -125,10 +125,11 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
     return m;
   }, [clientTeams]);
 
-  // Deactivated users don't hold a seat (the database and the
-  // admin-create-user Edge Function count the same way).
+  // Only active Clients hold a seat. Client Admins and deactivated users
+  // don't (the database and the admin-create-user Edge Function count the
+  // same way — Fix admins and seats.sql).
   const activeUsers = orgUsers.filter((u) => !u.deactivated_at);
-  const seatsUsed = activeUsers.length;
+  const seatsUsed = activeUsers.filter((u) => u.role === 'client').length;
   const visibleUsers = showDeactivated ? orgUsers : activeUsers;
   const seatLimit = org?.seat_limit ?? 0;
   const atCap = seatsUsed >= seatLimit;
@@ -163,7 +164,7 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.heading}>Org Users</Text>
-            <Text style={styles.subheading}>Manage users within your seat allowance.</Text>
+            <Text style={styles.subheading}>Manage users within your Client seat allowance. Client Admins don't use a seat.</Text>
           </View>
           <OutlineButton title={showForm ? 'Cancel' : '+ Add User'} onPress={() => setShowForm((s) => !s)} />
         </View>
@@ -171,8 +172,8 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
 
         <StatRow
           items={[
-            { num: `${seatsUsed} of ${seatLimit}`, label: 'Seats Used', icon: 'users' },
-            { num: String(activeUsers.filter((u) => u.role === 'client').length), label: 'Clients', icon: 'briefcase' },
+            { num: `${seatsUsed} of ${seatLimit}`, label: 'Client Seats Used', icon: 'users' },
+            { num: String(activeUsers.filter((u) => u.role === 'client_admin').length), label: 'Client Admins', icon: 'briefcase' },
             { num: String(seatLimit - seatsUsed > 0 ? seatLimit - seatsUsed : 0), label: 'Seats Remaining', icon: 'user-plus' },
           ]}
         />
@@ -193,7 +194,7 @@ export default function ClientAdminUsersScreen({ profile }: { profile: Profile }
           <View style={styles.panel}>
             {atCap ? (
               <Text style={styles.errorText}>
-                Seat limit reached ({seatsUsed}/{seatLimit}). Ask Super Admin to raise it before adding more users.
+                Seat limit reached ({seatsUsed} of {seatLimit} Client seats used). Ask Super Admin to raise it before adding more Clients.
               </Text>
             ) : (
               <>

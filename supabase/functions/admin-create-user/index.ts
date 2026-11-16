@@ -14,8 +14,9 @@
 // public.users insert) is identical either way — only the validation
 // branches by caller role:
 //
-//   Super Admin  -> can create manager / accountant / client_admin,
-//                   anywhere in their own tenant, no seat limit.
+//   Super Admin  -> can create super_admin / manager / accountant /
+//                   client_admin, in their own tenant only. Client
+//                   Admins use no seat.
 //   Client Admin -> can create client ONLY, forced into their own org,
 //                   blocked once seat_limit is hit (Roles doc: "Cannot
 //                   exceed the seat limit set by Super Admin").
@@ -47,7 +48,15 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-type TargetRole = 'manager' | 'accountant' | 'client_admin' | 'client';
+type TargetRole = 'super_admin' | 'manager' | 'accountant' | 'client_admin' | 'client';
+
+// 16 Nov 2026 changes (Fix admins and seats.sql goes with this file):
+//   - Super Admin can also create another Super Admin for their own firm
+//     (Super Admins are equal; the database still keeps at least one active).
+//   - Only Clients use seats. Client Admins never do.
+//   - The database now checks the seat limit itself, under a lock, at the
+//     moment the person is saved (two requests at once can't both take the
+//     last seat). The count below is only for an early, friendly message.
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -134,7 +143,7 @@ Deno.serve(async (req) => {
     let resolvedClientOrgId: string | null = null;
 
     if (callerProfile.role === 'super_admin') {
-      if (!['manager', 'accountant', 'client_admin'].includes(targetRole)) {
+      if (!['super_admin', 'manager', 'accountant', 'client_admin'].includes(targetRole)) {
         return jsonResponse({ error: `Super Admin cannot create a ${targetRole} account.` }, 403);
       }
       if (targetRole === 'client_admin') {
@@ -170,9 +179,10 @@ Deno.serve(async (req) => {
       resolvedClientOrgId = callerProfile.client_org_id;
 
       // Seat limit check (Roles doc: "Cannot exceed the seat limit set
-      // by Super Admin") — counts everyone currently ACTIVE in the org
-      // against the cap before creating one more. Deactivated users
-      // (Add_user_deactivation.sql) don't hold a seat.
+      // by Super Admin") — counts the active CLIENTS in the org against
+      // the cap before creating one more. Client Admins and deactivated
+      // users don't hold a seat. The database repeats this check under a
+      // lock when the profile is saved (users_zz_seat_limit).
       const { data: org, error: orgError } = await adminClient
         .from('client_organizations')
         .select('seat_limit')
@@ -185,13 +195,14 @@ Deno.serve(async (req) => {
         .from('users')
         .select('id', { count: 'exact', head: true })
         .eq('client_org_id', resolvedClientOrgId)
+        .eq('role', 'client')
         .is('deactivated_at', null);
       if (countError) {
         return jsonResponse({ error: 'Could not check seat usage.' }, 500);
       }
       if ((count ?? 0) >= org.seat_limit) {
         return jsonResponse(
-          { error: `Seat limit reached (${count}/${org.seat_limit}). Ask Super Admin to raise it before adding more users.` },
+          { error: `Seat limit reached (${count} of ${org.seat_limit} Client seats used). Ask Super Admin to raise it before adding more Clients.` },
           403
         );
       }
@@ -226,6 +237,11 @@ Deno.serve(async (req) => {
       // roll back the created auth account so a failed create doesn't
       // silently orphan an account nobody can see or manage.
       await adminClient.auth.admin.deleteUser(created.user.id);
+      // The database's seat rule (another request took the last seat
+      // a moment earlier) — a normal refusal, not a server error.
+      if (insertError.message.startsWith('No free seat')) {
+        return jsonResponse({ error: insertError.message }, 403);
+      }
       return jsonResponse({ error: `Could not save user profile: ${insertError.message}` }, 500);
     }
 

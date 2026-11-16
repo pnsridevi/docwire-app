@@ -135,7 +135,8 @@ export function DeactivateUserPanel({
 
             {mode === 'reactivate' ? (
               <Text style={styles.subtitle}>
-                {name} will be able to sign in again with their existing password, and will use a seat again.
+                {name} will be able to sign in again with their existing password
+                {target && target.role === 'client' ? ', and will use a Client seat again' : ''}.
                 {target && (target.role === 'manager' || target.role === 'accountant')
                   ? ' They come back with no Clients — assign Clients to them as usual.'
                   : ''}
@@ -143,8 +144,8 @@ export function DeactivateUserPanel({
             ) : (
               <Text style={styles.subtitle}>
                 {name} won't be able to sign in, and will lose access straight away, even on a device that is still
-                signed in. Everything they uploaded or created stays, with their name on it. They no longer use a seat,
-                and you can reactivate them later.
+                signed in. Everything they uploaded or created stays, with their name on it.
+                {target && target.role === 'client' ? ' They no longer use a Client seat.' : ''} You can reactivate them later.
               </Text>
             )}
 
@@ -229,6 +230,18 @@ export function DeactivateUserPanel({
                   </>
                 )}
 
+                {blockers.client_admin_needed && (
+                  <>
+                    <Text style={styles.sectionHeading}>Last Client Admin</Text>
+                    <Text style={styles.itemText}>
+                      {name} is the only active Client Admin of an organisation that still has active Clients.
+                    </Text>
+                    <Text style={styles.meta}>
+                      Add or reactivate another Client Admin for it first, so someone can still manage its users.
+                    </Text>
+                  </>
+                )}
+
                 {blockers.rework_documents.length > 0 && (
                   <>
                     <Text style={styles.sectionHeading}>Documents waiting for {name} to reupload</Text>
@@ -251,8 +264,8 @@ export function DeactivateUserPanel({
 
             {mode === 'deactivate' && blockers && !blocked && blockers.only_client_admin && (
               <Text style={styles.warning}>
-                {name} is the only active Client Admin of their organisation. Nobody there will be able to manage its users
-                until another Client Admin is added.
+                {name} is the only active Client Admin of their organisation. It has no active Clients now; to add Clients
+                later, add or reactivate a Client Admin first.
               </Text>
             )}
 
