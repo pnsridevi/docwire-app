@@ -1200,8 +1200,12 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
   // with you" row, not "your own" task — no new field needed to detect it.
   const isSharedIntoTask = (item: Task) => profile.role === 'client' && item.creator_id !== profile.id && item.assignee_id !== profile.id;
 
+  // Escalation is the firm's internal follow-up: staff see "Escalated" in place of
+  // "Overdue"; a Client never sees it, so a late task stays "Overdue" (decision of 12 Oct 2026).
+  const isStaff = profile.role !== 'client';
+
   const renderBadges = (item: Task, overdue: boolean) =>
-    item.recurring || overdue || item.escalated || isSharedIntoTask(item) ? (
+    item.recurring || overdue || (isStaff && item.escalated) || isSharedIntoTask(item) ? (
       <View style={styles.badgeRow}>
         {isSharedIntoTask(item) && (
           <View style={styles.badgeShared}>
@@ -1219,9 +1223,9 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
             <Text style={styles.badgeDangerText}>Overdue</Text>
           </View>
         )}
-        {item.escalated && (
+        {isStaff && item.escalated && (
           <View style={styles.badgeDanger}>
-            <Text style={styles.badgeDangerText}>Escalated to Manager</Text>
+            <Text style={styles.badgeDangerText}>Escalated</Text>
           </View>
         )}
       </View>
@@ -1236,7 +1240,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
             keyExtractor={(t) => t.id}
             ListHeaderComponent={listHeader}
             renderItem={(item, columns) => {
-              const overdue = isOverdue(item, todayStr);
+              const overdue = isOverdue(item, todayStr) && (!isStaff || !item.escalated);
               return (
                 <View style={[styles.taskCard, columns === 2 && styles.taskCardGrid]}>
                   <View style={styles.taskTopRow}>
@@ -1309,7 +1313,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                 header: 'Due',
                 width: 130,
                 render: (item) => {
-                  const overdue = isOverdue(item, todayStr);
+                  const overdue = isOverdue(item, todayStr) && (!isStaff || !item.escalated);
                   return (
                     <View>
                       <Text style={styles.taskMeta}>{item.due_date ?? '—'}</Text>
@@ -1318,7 +1322,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                           <Text style={styles.badgeDangerText}>Overdue</Text>
                         </View>
                       )}
-                      {item.escalated && (
+                      {isStaff && item.escalated && (
                         <View style={styles.badgeDanger}>
                           <Text style={styles.badgeDangerText}>Escalated</Text>
                         </View>

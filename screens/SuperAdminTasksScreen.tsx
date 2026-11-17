@@ -145,7 +145,7 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
             keyExtractor={(t) => t.id}
             ListHeaderComponent={listHeader}
             renderItem={(item, columns) => {
-              const overdue = isOverdue(item, todayStr);
+              const overdue = isOverdue(item, todayStr) && !item.escalated; // "Escalated" replaces "Overdue" on the row
               return (
                 <View style={[styles.taskCard, columns === 2 && styles.taskCardGrid]}>
                   <View style={styles.taskTopRow}>
@@ -172,7 +172,7 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
                       )}
                       {item.escalated && (
                         <View style={styles.badgeDanger}>
-                          <Text style={styles.badgeDangerText}>Escalated to Manager</Text>
+                          <Text style={styles.badgeDangerText}>Escalated</Text>
                         </View>
                       )}
                     </View>
@@ -244,7 +244,7 @@ export default function SuperAdminTasksScreen({ profile }: { profile: Profile })
                 header: 'Due',
                 width: 130,
                 render: (item) => {
-                  const overdue = isOverdue(item, todayStr);
+                  const overdue = isOverdue(item, todayStr) && !item.escalated; // "Escalated" replaces "Overdue" on the row
                   return (
                     <View>
                       <Text style={styles.taskMeta}>{item.due_date ?? '—'}</Text>

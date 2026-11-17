@@ -34,6 +34,8 @@ function priorityColor(p: TaskPriority) {
 // exactly one org"). RLS (tasks_select_client_admin) already scopes this
 // server-side. Read-only, same reasoning as Super Admin's Tasks view —
 // Client Admin never creates or is assigned a task (§7.2).
+// Escalation is the firm's internal follow-up, so a Client Admin never sees it:
+// a late task stays "Overdue" (decision of 12 Oct 2026).
 export default function ClientAdminTasksScreen({ profile }: { profile: Profile }) {
   const breakpoint = useBreakpoint();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -141,7 +143,7 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
                     {nameWithStatus(item.assignee_name, item.assignee_id, deactivatedIds)}
                     {item.due_date ? `  ·  due ${item.due_date}` : ''}
                   </Text>
-                  {(item.recurring || overdue || item.escalated) && (
+                  {(item.recurring || overdue) && (
                     <View style={styles.badgeRow}>
                       {item.recurring && (
                         <View style={styles.badgeNeutral}>
@@ -151,11 +153,6 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
                       {overdue && (
                         <View style={styles.badgeDanger}>
                           <Text style={styles.badgeDangerText}>Overdue</Text>
-                        </View>
-                      )}
-                      {item.escalated && (
-                        <View style={styles.badgeDanger}>
-                          <Text style={styles.badgeDangerText}>Escalated to Manager</Text>
                         </View>
                       )}
                     </View>
@@ -228,11 +225,6 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
                       {overdue && (
                         <View style={styles.badgeDanger}>
                           <Text style={styles.badgeDangerText}>Overdue</Text>
-                        </View>
-                      )}
-                      {item.escalated && (
-                        <View style={styles.badgeDanger}>
-                          <Text style={styles.badgeDangerText}>Escalated</Text>
                         </View>
                       )}
                     </View>
