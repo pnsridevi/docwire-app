@@ -68,7 +68,7 @@ export function TaskSupervision({
   const departed = deactivatedIds.has(task.creator_id) || deactivatedIds.has(task.assignee_id);
   const showReassign = canSupervise && isTaskOpen(task);
   const showClose = canSupervise && departed && task.status === 'in_progress';
-  const showStop = canSupervise && departed && task.recurring && !task.next_occurrence_generated_at;
+  const showStop = canSupervise && task.recurring && !task.next_occurrence_generated_at;
   if (!latest && !showReassign && !showClose && !showStop) return null;
 
   const startReassign = async () => {

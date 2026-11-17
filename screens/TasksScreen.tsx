@@ -1043,7 +1043,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
     const departed = deactivatedIds.has(item.creator_id) || deactivatedIds.has(item.assignee_id);
     const showReassign = supervise && isTaskOpen(item);
     const showClose = supervise && departed && item.status === 'in_progress';
-    const showStop = supervise && departed && item.recurring && !item.next_occurrence_generated_at;
+    const showStop = supervise && item.recurring && !item.next_occurrence_generated_at;
     if (!latest && !showReassign && !showClose && !showStop) return null;
     return (
       <View style={styles.supervisionWrap}>
