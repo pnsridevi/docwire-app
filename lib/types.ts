@@ -230,7 +230,7 @@ export type Task = {
 export type TaskActivity = {
   id: string;
   task_id: string;
-  action: 'reassigned' | 'closed' | 'stopped_repeating';
+  action: 'reassigned' | 'closed' | 'stopped_repeating' | 'resumed_repeating';
   details: string;
   actor_id: string | null;
   actor_name: string | null;

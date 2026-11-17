@@ -13,8 +13,9 @@ import { ReassignOption, Task, TaskActivity } from '../lib/types';
 // - Always: the task's latest history line (e.g. "Reassigned from Kavya
 //   to Arjun because the Client's Accountant changed · 8 Oct 2026").
 // - When canSupervise (Super Admin): "Reassign" on open tasks, and
-//   "Close task" / "Stop repeating" on tasks whose creator or assignee
-//   has been deactivated. The database checks every one of these again.
+//   "Close task" on tasks whose creator or assignee has been deactivated,
+//   and "Stop repeating" / "Resume repeating" on repeating tasks (P-21,
+//   P-25). The database checks every one of these again.
 
 // "Open" exactly as the database counts it (is_task_open).
 export function isTaskOpen(t: Task): boolean {
@@ -69,7 +70,8 @@ export function TaskSupervision({
   const showReassign = canSupervise && isTaskOpen(task);
   const showClose = canSupervise && departed && task.status === 'in_progress';
   const showStop = canSupervise && task.recurring && !task.next_occurrence_generated_at;
-  if (!latest && !showReassign && !showClose && !showStop) return null;
+  const showResume = canSupervise && !task.recurring && !!task.recurrence_term && !!task.due_date && !task.next_occurrence_generated_at;
+  if (!latest && !showReassign && !showClose && !showStop && !showResume) return null;
 
   const startReassign = async () => {
     setReassigning(true);
@@ -99,7 +101,7 @@ export function TaskSupervision({
     await onChanged();
   };
 
-  const supervise = async (action: 'complete' | 'stop_repeating') => {
+  const supervise = async (action: 'complete' | 'stop_repeating' | 'resume_repeating') => {
     setBusy(true);
     setError(null);
     const { error: rpcError } = await supabase.rpc('supervise_task', { p_task_id: task.id, p_action: action });
@@ -142,7 +144,7 @@ export function TaskSupervision({
           </TouchableOpacity>
         </View>
       ) : (
-        (showReassign || showClose || showStop) && (
+        (showReassign || showClose || showStop || showResume) && (
           <View style={styles.row}>
             {showReassign && (
               <TouchableOpacity onPress={startReassign}>
@@ -157,6 +159,11 @@ export function TaskSupervision({
             {showStop && (
               <TouchableOpacity disabled={busy} onPress={() => supervise('stop_repeating')}>
                 <Text style={styles.link}>Stop repeating</Text>
+              </TouchableOpacity>
+            )}
+            {showResume && (
+              <TouchableOpacity disabled={busy} onPress={() => supervise('resume_repeating')}>
+                <Text style={styles.link}>Resume repeating</Text>
               </TouchableOpacity>
             )}
           </View>

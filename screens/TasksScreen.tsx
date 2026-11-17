@@ -1023,9 +1023,9 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
     await loadTasks();
   };
 
-  // Close, or stop the repeating of, a task whose creator or assignee
-  // has been deactivated — nobody else could end it otherwise.
-  const superviseTask = async (item: Task, action: 'complete' | 'stop_repeating') => {
+  // Close a task whose creator or assignee has been deactivated, or stop /
+  // resume the repeating of a task (P-21, P-25). The database checks each again.
+  const superviseTask = async (item: Task, action: 'complete' | 'stop_repeating' | 'resume_repeating') => {
     setTaskActionBusy(true);
     setTaskActionError(null);
     const { error } = await supabase.rpc('supervise_task', { p_task_id: item.id, p_action: action });
@@ -1044,7 +1044,8 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
     const showReassign = supervise && isTaskOpen(item);
     const showClose = supervise && departed && item.status === 'in_progress';
     const showStop = supervise && item.recurring && !item.next_occurrence_generated_at;
-    if (!latest && !showReassign && !showClose && !showStop) return null;
+    const showResume = supervise && !item.recurring && !!item.recurrence_term && !!item.due_date && !item.next_occurrence_generated_at;
+    if (!latest && !showReassign && !showClose && !showStop && !showResume) return null;
     return (
       <View style={styles.supervisionWrap}>
         {latest && (
@@ -1076,7 +1077,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
             </TouchableOpacity>
           </View>
         ) : (
-          (showReassign || showClose || showStop) && (
+          (showReassign || showClose || showStop || showResume) && (
             <View style={styles.reassignRow}>
               {showReassign && (
                 <TouchableOpacity onPress={() => startReassign(item)}>
@@ -1091,6 +1092,11 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
               {showStop && (
                 <TouchableOpacity disabled={taskActionBusy} onPress={() => superviseTask(item, 'stop_repeating')}>
                   <Text style={styles.actionLink}>Stop repeating</Text>
+                </TouchableOpacity>
+              )}
+              {showResume && (
+                <TouchableOpacity disabled={taskActionBusy} onPress={() => superviseTask(item, 'resume_repeating')}>
+                  <Text style={styles.actionLink}>Resume repeating</Text>
                 </TouchableOpacity>
               )}
             </View>
