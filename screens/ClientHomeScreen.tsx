@@ -221,7 +221,6 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
   // CURRENT file as a version before overwriting it, so nothing is ever
   // silently lost.
   const handleReupload = async (doc: Doc) => {
-    console.log('[ClientHomeScreen] reupload: starting for document', { id: doc.id, name: doc.name, status: doc.status, reupload_requested: doc.reupload_requested, current_file_path: doc.file_path });
     const file = await pickDocumentFile();
     if (!file) {
       // Picker returned nothing — most commonly the user cancelled, but
@@ -229,10 +228,8 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
       // in a row: browsers don't fire the file input's change event when
       // the selected path string is unchanged, so the picker's promise
       // resolves as if cancelled even though the user did pick a file.
-      console.log('[ClientHomeScreen] reupload: no file returned from picker (cancelled, or same-file-twice browser quirk)');
       return;
     }
-    console.log('[ClientHomeScreen] reupload: file picked', { name: file.name, size: file.size, mimeType: file.mimeType });
     setReuploadingId(doc.id);
 
     const uploadResult = await uploadDocumentFile(file, profile.id);
@@ -242,7 +239,6 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
       setReuploadingId(null);
       return;
     }
-    console.log('[ClientHomeScreen] reupload: file uploaded to storage at path', uploadResult.path);
 
     // Archive the file being replaced — version_number is assigned by a
     // DB trigger, not supplied here, so concurrent reuploads can't race
@@ -266,9 +262,6 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
         setReuploadingId(null);
         return;
       }
-      console.log('[ClientHomeScreen] reupload: previous version archived successfully');
-    } else {
-      console.log('[ClientHomeScreen] reupload: no previous file_path to archive (first real file on this document)');
     }
 
     const updatePayload = {
@@ -277,7 +270,6 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
       mime_type: file.mimeType,
       reupload_fulfilled: true,
     };
-    console.log('[ClientHomeScreen] reupload: sending documents UPDATE', { id: doc.id, updatePayload });
 
     // IMPORTANT: .select().single() here, not a bare .update() — without
     // it, Supabase reports success even when RLS silently matches zero
@@ -294,7 +286,6 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
       .eq('id', doc.id)
       .select('id, file_path, reupload_fulfilled')
       .single();
-    console.log('[ClientHomeScreen] reupload: UPDATE result', { updated, error });
     if (error || !updated) {
       console.error('[ClientHomeScreen] reupload failed:', error);
       setLoadError(

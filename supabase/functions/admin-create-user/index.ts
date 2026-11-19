@@ -206,6 +206,24 @@ Deno.serve(async (req) => {
           403
         );
       }
+
+      // A new Client is given the organisation's default Manager and
+      // Accountant, so the database refuses a Client while either is
+      // missing (P-26). Check it here first, before any login is made, and
+      // say so in words a Client Admin can act on.
+      const [{ data: defaultManager, error: managerError }, { data: defaultAccountant, error: accountantError }] = await Promise.all([
+        adminClient.from('manager_assignments').select('manager_id').eq('client_org_id', resolvedClientOrgId).maybeSingle(),
+        adminClient.from('accountant_assignments').select('accountant_id').eq('client_org_id', resolvedClientOrgId).maybeSingle(),
+      ]);
+      if (managerError || accountantError) {
+        return jsonResponse({ error: 'Could not check your organisation\'s Manager and Accountant.' }, 500);
+      }
+      if (!defaultManager?.manager_id || !defaultAccountant?.accountant_id) {
+        return jsonResponse(
+          { error: "Your organisation isn't ready for Clients yet: your firm still has to choose its default Manager and Accountant. Please ask your firm's Super Admin." },
+          409
+        );
+      }
     } else {
       return jsonResponse({ error: 'Only Super Admin or Client Admin can create accounts.' }, 403);
     }

@@ -538,7 +538,11 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
   };
 
   const workDocSubject = (d: Doc) =>
-    d.client_id ? d.client_name ?? 'a Client' : d.client_org_id ? `All Clients · ${d.client_org_name ?? 'org'}` : 'Internal — no client';
+    d.client_id
+      ? d.client_name ?? 'a Client'
+      : d.client_org_id
+      ? `${d.shared_with_clients ? 'All Clients' : 'Whole organisation'} · ${d.client_org_name ?? 'org'}`
+      : 'Internal — no client';
 
   const renderEditPanel = (doc: Doc) => (
     <View style={styles.editPanel}>
@@ -944,7 +948,9 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
                       {item.client_org_id
                         ? item.client_id
                           ? nameWithStatus(item.client_name ?? 'Unnamed', item.client_id, deactivatedIds)
-                          : 'All Clients'
+                          : item.shared_with_clients // a file for the whole organisation: say "All Clients" only when they can see it
+                          ? 'All Clients'
+                          : 'Whole organisation'
                         : item.shared_with_user_name
                         ? `Direct to ${item.shared_with_user_name}`
                         : 'Direct share'}
