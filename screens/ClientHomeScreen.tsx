@@ -459,15 +459,8 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
 
   const emptyMessage = <Text style={styles.empty}>{docs.length === 0 ? 'No documents yet.' : 'No documents match this filter.'}</Text>;
 
-  return (
-    <ScreenContainer scroll={breakpoint !== 'phone'}>
-      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
-        {breakpoint === 'phone' ? (
-          <ResponsiveGrid
-            data={visibleDocs}
-            keyExtractor={(d) => d.id}
-            ListHeaderComponent={listHeader}
-            renderItem={(item, columns) => (
+  // One row as a card: phones, and tables too wide for the room they have (P-28)
+  const renderCard = (item: (typeof visibleDocs)[number], columns: 1 | 2) => (
               <View style={[styles.docRow, columns === 2 && styles.docRowGrid]}>
                 <View style={{ flex: 1 }}>
                   <TouchableOpacity style={styles.docNameRow} disabled={!item.file_path} onPress={() => handleOpenDocument(item)}>
@@ -485,11 +478,22 @@ export default function ClientHomeScreen({ profile }: { profile: Profile }) {
                 </View>
                 <Pill status={item.status} />
               </View>
-            )}
+            );
+
+  return (
+    <ScreenContainer scroll={breakpoint !== 'phone'}>
+      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
+        {breakpoint === 'phone' ? (
+          <ResponsiveGrid
+            data={visibleDocs}
+            keyExtractor={(d) => d.id}
+            ListHeaderComponent={listHeader}
+            renderItem={renderCard}
             ListEmptyComponent={emptyMessage}
           />
         ) : (
           <DataTable
+            renderCard={(item) => renderCard(item, 1)}
             scrollable={false}
             data={visibleDocs}
             keyExtractor={(d) => d.id}

@@ -880,15 +880,8 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
 
   const rowData = loading ? [] : visibleDocs;
 
-  return (
-    <ScreenContainer scroll={breakpoint !== 'phone'}>
-      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
-        {breakpoint === 'phone' ? (
-          <ResponsiveGrid
-            data={rowData}
-            keyExtractor={(d) => d.id}
-            ListHeaderComponent={listHeader}
-            renderItem={(item, columns) => (
+  // One row as a card: phones, and tables too wide for the room they have (P-28)
+  const renderCard = (item: (typeof rowData)[number], columns: 1 | 2) => (
               <View style={[styles.docCard, columns === 2 && styles.docCardGrid]}>
                 <TouchableOpacity style={styles.docNameRow} disabled={!item.file_path} onPress={() => handleOpenDocument(item)}>
                   <Feather name="file-text" size={13} color={colors.textFaint} />
@@ -910,11 +903,22 @@ export default function ManagerHomeScreen({ profile }: { profile: Profile }) {
                 <Pill status={item.status} />
                 {renderActions(item)}
               </View>
-            )}
+            );
+
+  return (
+    <ScreenContainer scroll={breakpoint !== 'phone'}>
+      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
+        {breakpoint === 'phone' ? (
+          <ResponsiveGrid
+            data={rowData}
+            keyExtractor={(d) => d.id}
+            ListHeaderComponent={listHeader}
+            renderItem={renderCard}
             ListEmptyComponent={emptyMessage}
           />
         ) : (
           <DataTable
+            renderCard={(item) => renderCard(item, 1)}
             scrollable={false}
             data={rowData}
             keyExtractor={(d) => d.id}

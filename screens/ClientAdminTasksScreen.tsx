@@ -122,15 +122,8 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
   const emptyMessage = <Text style={styles.empty}>{loading ? 'Loading...' : 'No tasks match this filter.'}</Text>;
   const rowData = loading ? [] : visibleTasks;
 
-  return (
-    <ScreenContainer scroll={breakpoint !== 'phone'}>
-      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
-        {breakpoint === 'phone' ? (
-          <ResponsiveGrid
-            data={rowData}
-            keyExtractor={(t) => t.id}
-            ListHeaderComponent={listHeader}
-            renderItem={(item, columns) => {
+  // One row as a card: phones, and tables too wide for the room they have (P-28)
+  const renderCard = (item: (typeof rowData)[number], columns: 1 | 2) => {
               const overdue = isOverdue(item, todayStr);
               return (
                 <View style={[styles.taskCard, columns === 2 && styles.taskCardGrid]}>
@@ -169,11 +162,22 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
                   />
                 </View>
               );
-            }}
+            };
+
+  return (
+    <ScreenContainer scroll={breakpoint !== 'phone'}>
+      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
+        {breakpoint === 'phone' ? (
+          <ResponsiveGrid
+            data={rowData}
+            keyExtractor={(t) => t.id}
+            ListHeaderComponent={listHeader}
+            renderItem={renderCard}
             ListEmptyComponent={emptyMessage}
           />
         ) : (
           <DataTable
+            renderCard={(item) => renderCard(item, 1)}
             scrollable={false}
             data={rowData}
             keyExtractor={(t) => t.id}
@@ -183,7 +187,7 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
               {
                 key: 'task',
                 header: 'Task',
-                width: 260,
+                width: 260, minWidth: 170,
                 render: (item) => (
                   <View>
                     <Text style={styles.taskTitle}>{item.title}</Text>
@@ -199,7 +203,7 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
               {
                 key: 'people',
                 header: 'Creator → Assignee',
-                width: 200,
+                width: 200, minWidth: 140,
                 render: (item) => (
                   <Text style={styles.taskMeta}>
                     {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
@@ -210,13 +214,13 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
               {
                 key: 'recurring',
                 header: 'Recurring',
-                width: 120,
+                width: 120, minWidth: 90,
                 render: (item) => <Text style={styles.taskMeta}>{item.recurring ? `↻ ${recurrenceLabel(item.recurrence_term)}` : 'One-time'}</Text>,
               },
               {
                 key: 'due',
                 header: 'Due',
-                width: 130,
+                width: 130, minWidth: 100,
                 render: (item) => {
                   const overdue = isOverdue(item, todayStr);
                   return (
@@ -234,7 +238,7 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
               {
                 key: 'bookEntry',
                 header: 'Book Entry',
-                width: 100,
+                width: 100, minWidth: 70,
                 render: (item) =>
                   item.linked_document_id ? (
                     <Text style={item.linked_document_needs_entry ? styles.bookEntryYes : styles.taskMeta}>
@@ -247,7 +251,7 @@ export default function ClientAdminTasksScreen({ profile }: { profile: Profile }
               {
                 key: 'severity',
                 header: 'Severity',
-                width: 100,
+                width: 100, minWidth: 70,
                 render: (item) => (
                   <View style={styles.severityCell}>
                     <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />

@@ -746,6 +746,17 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
     </Modal>
   );
 
+  // One row as a card: phones, and tables too wide for the room they have (P-28)
+  const renderCard = (item: (typeof rowData)[number], columns: 1 | 2) => (
+              <View style={[styles.docCard, columns === 2 && styles.docCardGrid, !!item.deleted_at && styles.docCardDeleted]}>
+                {renderName(item)}
+                {!isClientSide && <Text style={styles.orgText}>{item.client_org_name ?? 'Unknown org'}</Text>}
+                <Text style={styles.categoryText}>{categoryLabel(categories, item.category_id, item.subtag_id)}</Text>
+                {renderUpdated(item)}
+                <View style={{ marginTop: 8 }}>{renderActions(item)}</View>
+              </View>
+            );
+
   return (
     <ScreenContainer scroll={breakpoint !== 'phone'}>
       <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
@@ -754,19 +765,12 @@ export default function MasterDocsScreen({ profile }: { profile: Profile }) {
             data={rowData}
             keyExtractor={(d) => d.id}
             ListHeaderComponent={listHeader}
-            renderItem={(item, columns) => (
-              <View style={[styles.docCard, columns === 2 && styles.docCardGrid, !!item.deleted_at && styles.docCardDeleted]}>
-                {renderName(item)}
-                {!isClientSide && <Text style={styles.orgText}>{item.client_org_name ?? 'Unknown org'}</Text>}
-                <Text style={styles.categoryText}>{categoryLabel(categories, item.category_id, item.subtag_id)}</Text>
-                {renderUpdated(item)}
-                <View style={{ marginTop: 8 }}>{renderActions(item)}</View>
-              </View>
-            )}
+            renderItem={renderCard}
             ListEmptyComponent={emptyMessage}
           />
         ) : (
           <DataTable
+            renderCard={(item) => renderCard(item, 1)}
             scrollable={false}
             data={rowData}
             keyExtractor={(d) => d.id}

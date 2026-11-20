@@ -1237,15 +1237,8 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
       </View>
     ) : null;
 
-  return (
-    <ScreenContainer scroll={breakpoint !== 'phone'}>
-      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
-        {breakpoint === 'phone' ? (
-          <ResponsiveGrid
-            data={visibleTasks}
-            keyExtractor={(t) => t.id}
-            ListHeaderComponent={listHeader}
-            renderItem={(item, columns) => {
+  // One row as a card: phones, and tables too wide for the room they have (P-28)
+  const renderCard = (item: (typeof visibleTasks)[number], columns: 1 | 2) => {
               const overdue = isOverdue(item, todayStr) && (!isStaff || !item.escalated);
               return (
                 <View style={[styles.taskCard, columns === 2 && styles.taskCardGrid]}>
@@ -1266,11 +1259,22 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                   {renderStatusAndActions(item)}
                 </View>
               );
-            }}
+            };
+
+  return (
+    <ScreenContainer scroll={breakpoint !== 'phone'}>
+      <View style={[styles.screen, breakpoint === 'phone' && styles.screenPhone]}>
+        {breakpoint === 'phone' ? (
+          <ResponsiveGrid
+            data={visibleTasks}
+            keyExtractor={(t) => t.id}
+            ListHeaderComponent={listHeader}
+            renderItem={renderCard}
             ListEmptyComponent={emptyMessage}
           />
         ) : (
           <DataTable
+            renderCard={(item) => renderCard(item, 1)}
             scrollable={false}
             data={visibleTasks}
             keyExtractor={(t) => t.id}
@@ -1280,7 +1284,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
               {
                 key: 'task',
                 header: 'Task',
-                width: 260,
+                width: 260, minWidth: 170,
                 render: (item) => (
                   <View>
                     <Text style={styles.taskTitle}>{item.title}</Text>
@@ -1296,11 +1300,11 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
                   </View>
                 ),
               },
-              { key: 'client', header: 'Client', width: 150, render: (item) => <Text style={styles.taskMeta}>{item.client_org_name ?? '—'}</Text> },
+              { key: 'client', header: 'Client', width: 150, minWidth: 110, render: (item) => <Text style={styles.taskMeta}>{item.client_org_name ?? '—'}</Text> },
               {
                 key: 'people',
                 header: 'Creator → Assignee',
-                width: 190,
+                width: 190, minWidth: 140,
                 render: (item) => (
                   <Text style={styles.taskMeta}>
                     {nameWithStatus(item.creator_name, item.creator_id, deactivatedIds)} →{' '}
@@ -1311,13 +1315,13 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
               {
                 key: 'recurring',
                 header: 'Recurring',
-                width: 130,
+                width: 130, minWidth: 90,
                 render: (item) => (item.recurring ? <Text style={styles.taskMeta}>↻ {recurrenceLabel(item.recurrence_term)}</Text> : <Text style={styles.taskMeta}>One-time</Text>),
               },
               {
                 key: 'due',
                 header: 'Due',
-                width: 130,
+                width: 130, minWidth: 100,
                 render: (item) => {
                   const overdue = isOverdue(item, todayStr) && (!isStaff || !item.escalated);
                   return (
@@ -1340,7 +1344,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
               {
                 key: 'bookEntry',
                 header: 'Book Entry',
-                width: 100,
+                width: 100, minWidth: 70,
                 render: (item) =>
                   item.linked_document_id ? (
                     <Text style={item.linked_document_needs_entry ? styles.bookEntryYes : styles.taskMeta}>
@@ -1355,7 +1359,7 @@ export default function TasksScreen({ profile }: { profile: Profile }) {
               {
                 key: 'severity',
                 header: 'Severity',
-                width: 100,
+                width: 100, minWidth: 70,
                 render: (item) => (
                   <View style={styles.severityCell}>
                     <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
@@ -1506,7 +1510,7 @@ const styles = StyleSheet.create({
   priorityDot: { width: 10, height: 10, borderRadius: 5 },
   taskDesc: { fontSize: 13, color: colors.textDim, marginTop: 4 },
   taskMeta: { fontSize: 12, color: colors.textFaint, marginTop: 6 },
-  taskBottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+  taskBottomRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   supervisionWrap: { marginTop: 8, gap: 6 },
   activityText: { fontSize: 11.5, color: colors.textDim, fontStyle: 'italic' },
   reassignRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12 },
